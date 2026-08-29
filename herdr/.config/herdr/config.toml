@@ -1,0 +1,33 @@
+[theme]
+name = "tokyo-night"
+auto_switch = false
+
+[theme.custom]
+panel_bg = "#222436"
+sidebar_bg = "#222436"
+active_row_bg = "#2d3f76"
+selection_bg = "#2d3f76"
+surface0 = "#2d3f76"
+surface1 = "#444a73"
+surface_dim = "#1b1d2b"
+
+text = "#c8d3f5"
+subtext0 = "#a9b1d6"
+overlay0 = "#828bb8"
+overlay1 = "#a9b1d6"
+accent = "#82aaff"
+
+[ui]
+agent_panel_sort = "spaces"
+
+[ui.sidebar.agents]
+rows = [
+  [
+    { token = "state_icon", fg = "#82aaff", bold = true },
+    { token = "workspace", fg = "#c8d3f5", bold = true },
+    { token = "tab", fg = "#a9b1d6" },
+  ],
+  [
+    { token = "agent", fg = "#ffffff", bold = true },
+  ],
+]

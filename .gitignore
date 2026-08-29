@@ -1,0 +1,17 @@
+# Operating-system and editor artifacts
+.DS_Store
+*.swp
+*.swo
+*~
+
+# Shell runtime state
+.zsh_history
+.zcompdump*
+
+# Herdr runtime state (the package tracks config.toml only)
+herdr/.config/herdr/.plugins.lock
+herdr/.config/herdr/*.log
+herdr/.config/herdr/session.json
+
+# Local tool state
+.direnv/
