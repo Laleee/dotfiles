@@ -271,7 +271,7 @@ fi
 count=$((count + 1))
 printf '%s\n' "$count" >"$DOTFILES_TEST_MV_COUNT"
 /bin/mv "$@"
-if [ "$count" -eq 2 ]; then
+if [ "$count" -eq 1 ]; then
   kill -KILL "$PPID"
 fi
 EOF
@@ -285,21 +285,20 @@ EOF
   publication_status=$?
   set -e
 
+  assert_equals 137 "$publication_status" \
+    'first publication was not terminated by SIGKILL after publication'
+  assert_equals 1 "$(cat "$mv_count")" \
+    'first completion publication used more than one rename'
   top_level_count=$(find "$completion_dir" -maxdepth 1 \
     \( -name _herdr -o -name _uv -o -name _uvx \) | wc -l | tr -d ' ')
   assert_equals 0 "$top_level_count" \
     'interrupted first publication exposed a partial top-level completion set'
-  if [ "$publication_status" -eq 0 ] &&
-    [ ! -L "$completion_dir/.dotfiles-completions-current" ]
-  then
-    fail 'successful first publication did not expose the completion directory'
-  fi
-  if [ -L "$completion_dir/.dotfiles-completions-current" ]; then
-    for completion_name in _herdr _uv _uvx; do
-      [ -s "$completion_dir/.dotfiles-completions-current/$completion_name" ] ||
-        fail "published completion directory is incomplete: $completion_name"
-    done
-  fi
+  [ -L "$completion_dir/.dotfiles-completions-current" ] ||
+    fail 'interrupted first publication did not preserve the published pointer'
+  for completion_name in _herdr _uv _uvx; do
+    [ -s "$completion_dir/.dotfiles-completions-current/$completion_name" ] ||
+      fail "published completion directory is incomplete: $completion_name"
+  done
 }
 
 test_zsh_uses_atomic_completion_directory() {
