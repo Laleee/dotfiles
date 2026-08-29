@@ -121,7 +121,8 @@ test_common_provisioning_is_idempotent_and_regenerates_completions() {
   [ -r "$home/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" ] ||
     fail 'zsh-syntax-highlighting was not cloned to the conventional OMZ path'
 
-  completion_dir="$home/.local/share/zsh/site-functions"
+  completion_root="$home/.local/share/zsh/site-functions"
+  completion_dir="$completion_root/.dotfiles-completions-current"
   assert_file_contains "$completion_dir/_herdr" 'herdr completion'
   assert_file_contains "$completion_dir/_uv" 'uv completion'
   assert_file_contains "$completion_dir/_uvx" 'uvx completion'
@@ -138,11 +139,14 @@ test_common_provisioning_is_idempotent_and_regenerates_completions() {
 test_completion_failure_preserves_existing_set() {
   home="$TEST_TMP_ROOT/atomic-home"
   bin="$TEST_TMP_ROOT/atomic-bin"
-  completion_dir="$home/.local/share/zsh/site-functions"
-  mkdir -p "$bin" "$completion_dir"
-  printf 'old herdr\n' >"$completion_dir/_herdr"
-  printf 'old uv\n' >"$completion_dir/_uv"
-  printf 'old uvx\n' >"$completion_dir/_uvx"
+  completion_root="$home/.local/share/zsh/site-functions"
+  old_release="$completion_root/.dotfiles-completions-release.old"
+  completion_dir="$completion_root/.dotfiles-completions-current"
+  mkdir -p "$bin" "$old_release"
+  printf 'old herdr\n' >"$old_release/_herdr"
+  printf 'old uv\n' >"$old_release/_uv"
+  printf 'old uvx\n' >"$old_release/_uvx"
+  ln -s "${old_release##*/}" "$completion_dir"
 
   cat >"$bin/herdr" <<'EOF'
 #!/bin/sh
@@ -164,7 +168,7 @@ EOF
   status=$?
   set -e
   [ "$status" -ne 0 ] || fail 'completion generation unexpectedly succeeded'
-  [ -z "$(find "$completion_dir" -maxdepth 1 -type d -name '.dotfiles-completions.*' -print -quit)" ] ||
+  [ -z "$(find "$completion_root" -maxdepth 1 -type d -name '.dotfiles-completions-release.*' ! -name '.dotfiles-completions-release.old' -print -quit)" ] ||
     fail 'failed completion generation left its staging directory behind'
   assert_equals 'old herdr' "$(cat "$completion_dir/_herdr")" \
     'Herdr completion changed after a later generator failed'
@@ -177,9 +181,10 @@ EOF
 test_completion_publication_failure_preserves_existing_set() {
   home="$TEST_TMP_ROOT/publication-home"
   bin="$TEST_TMP_ROOT/publication-bin"
-  completion_dir="$home/.local/share/zsh/site-functions"
+  completion_root="$home/.local/share/zsh/site-functions"
+  completion_dir="$completion_root/.dotfiles-completions-current"
   mv_count="$TEST_TMP_ROOT/publication-mv-count"
-  mkdir -p "$bin" "$completion_dir"
+  mkdir -p "$bin" "$completion_root"
 
   cat >"$bin/herdr" <<'EOF'
 #!/bin/sh
@@ -234,8 +239,80 @@ EOF
   assert_equals 'new herdr' "$(cat "$completion_dir/_herdr")" 'Herdr completion was not published'
   assert_equals 'new uv' "$(cat "$completion_dir/_uv")" 'UV completion was not published'
   assert_equals 'new uvx' "$(cat "$completion_dir/_uvx")" 'UVX completion was not published'
-  [ -L "$completion_dir/_herdr" ] && [ -L "$completion_dir/_uv" ] &&
-    [ -L "$completion_dir/_uvx" ] || fail 'completion facade links are incomplete'
+  [ -L "$completion_dir" ] || fail 'atomic completion directory pointer is missing'
+}
+
+test_first_completion_publication_has_one_atomic_entry() {
+  home="$TEST_TMP_ROOT/first-publication-home"
+  bin="$TEST_TMP_ROOT/first-publication-bin"
+  completion_dir="$home/.local/share/zsh/site-functions"
+  mv_count="$TEST_TMP_ROOT/first-publication-mv-count"
+  mkdir -p "$bin" "$completion_dir"
+
+  cat >"$bin/herdr" <<'EOF'
+#!/bin/sh
+printf 'first herdr\n'
+EOF
+  cat >"$bin/uv" <<'EOF'
+#!/bin/sh
+printf 'first uv\n'
+EOF
+  cat >"$bin/uvx" <<'EOF'
+#!/bin/sh
+printf 'first uvx\n'
+EOF
+  cat >"$bin/killing-mv" <<'EOF'
+#!/bin/sh
+set -eu
+count=0
+if [ -r "$DOTFILES_TEST_MV_COUNT" ]; then
+  count=$(cat "$DOTFILES_TEST_MV_COUNT")
+fi
+count=$((count + 1))
+printf '%s\n' "$count" >"$DOTFILES_TEST_MV_COUNT"
+/bin/mv "$@"
+if [ "$count" -eq 2 ]; then
+  kill -KILL "$PPID"
+fi
+EOF
+  chmod +x "$bin/herdr" "$bin/uv" "$bin/uvx" "$bin/killing-mv"
+
+  set +e
+  HOME="$home" PATH="$bin:/usr/bin:/bin" \
+    DOTFILES_MV_CMD="$bin/killing-mv" DOTFILES_TEST_MV_COUNT="$mv_count" \
+    bash -c '. "$1/scripts/provision-common.sh"; regenerate_completions' shell "$REPO_ROOT" \
+    >/dev/null 2>&1
+  publication_status=$?
+  set -e
+
+  top_level_count=$(find "$completion_dir" -maxdepth 1 \
+    \( -name _herdr -o -name _uv -o -name _uvx \) | wc -l | tr -d ' ')
+  assert_equals 0 "$top_level_count" \
+    'interrupted first publication exposed a partial top-level completion set'
+  if [ "$publication_status" -eq 0 ] &&
+    [ ! -L "$completion_dir/.dotfiles-completions-current" ]
+  then
+    fail 'successful first publication did not expose the completion directory'
+  fi
+  if [ -L "$completion_dir/.dotfiles-completions-current" ]; then
+    for completion_name in _herdr _uv _uvx; do
+      [ -s "$completion_dir/.dotfiles-completions-current/$completion_name" ] ||
+        fail "published completion directory is incomplete: $completion_name"
+    done
+  fi
+}
+
+test_zsh_uses_atomic_completion_directory() {
+  home="$TEST_TMP_ROOT/zsh-fpath-home"
+  mkdir -p "$home"
+  set +e
+  HOME="$home" XDG_DATA_HOME="$home/.local/share" ZSH="$home/missing-oh-my-zsh" \
+    ZSH_CUSTOM="$home/missing-oh-my-zsh/custom" zsh -dfc \
+    'source "$1"; [[ ${fpath[1]} == "$XDG_DATA_HOME/zsh/site-functions/.dotfiles-completions-current" ]]' \
+    zsh "$REPO_ROOT/zsh/.zshrc"
+  status=$?
+  set -e
+  [ "$status" -eq 0 ] || fail 'Zsh fpath does not use the atomic completion directory'
 }
 
 test_incomplete_uv_installation_is_not_replaced() {
@@ -511,6 +588,8 @@ EOF
 test_common_provisioning_is_idempotent_and_regenerates_completions
 test_completion_failure_preserves_existing_set
 test_completion_publication_failure_preserves_existing_set
+test_first_completion_publication_has_one_atomic_entry
+test_zsh_uses_atomic_completion_directory
 test_incomplete_uv_installation_is_not_replaced
 test_failed_remote_installer_cleans_temp_directory
 test_failed_neovim_download_cleans_temp_directory
