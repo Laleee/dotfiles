@@ -5,6 +5,7 @@ set -o pipefail
 
 DOTFILES_CURL_CMD=${DOTFILES_CURL_CMD:-curl}
 DOTFILES_GIT_CMD=${DOTFILES_GIT_CMD:-git}
+DOTFILES_MV_CMD=${DOTFILES_MV_CMD:-mv}
 DOTFILES_UV_INSTALL_URL=${DOTFILES_UV_INSTALL_URL:-https://astral.sh/uv/install.sh}
 DOTFILES_HERDR_INSTALL_URL=${DOTFILES_HERDR_INSTALL_URL:-https://herdr.dev/install.sh}
 DOTFILES_OMZ_URL=${DOTFILES_OMZ_URL:-https://github.com/ohmyzsh/ohmyzsh.git}
@@ -36,10 +37,27 @@ install_remote_script() (
 )
 
 install_uv_if_missing() {
-  if command -v uv >/dev/null 2>&1 || [ -x "$HOME/.local/bin/uv" ]; then
-    return 0
-  fi
-  install_remote_script "$DOTFILES_UV_INSTALL_URL" uv-install.sh env UV_NO_MODIFY_PATH=1
+  local uv_available=0
+  local uvx_available=0
+  dotfiles_tool_path uv >/dev/null 2>&1 && uv_available=1
+  dotfiles_tool_path uvx >/dev/null 2>&1 && uvx_available=1
+  case $uv_available:$uvx_available in
+    1:1) return 0 ;;
+    1:0)
+      dotfiles_error \
+        'uv is installed but uvx is missing; refusing to replace the existing UV installation'
+      return 1
+      ;;
+    0:1)
+      dotfiles_error \
+        'uvx is installed but uv is missing; refusing to replace the existing UV installation'
+      return 1
+      ;;
+    0:0)
+      install_remote_script "$DOTFILES_UV_INSTALL_URL" uv-install.sh \
+        env UV_NO_MODIFY_PATH=1
+      ;;
+  esac
 }
 
 install_herdr_if_missing() {
@@ -75,23 +93,169 @@ provision_common() {
   install_shell_dependencies
 }
 
+completion_facades_ready() {
+  local completion_dir=$1
+  local completion_name
+  local facade_target
+  [ -L "$completion_dir/.dotfiles-completions-current" ] || return 1
+  for completion_name in _herdr _uv _uvx; do
+    [ -L "$completion_dir/$completion_name" ] || return 1
+    facade_target=$(readlink "$completion_dir/$completion_name")
+    [ "$facade_target" = ".dotfiles-completions-current/$completion_name" ] || return 1
+  done
+}
+
+dotfiles_atomic_replace() {
+  local replace_source=$1
+  local replace_destination=$2
+  case $OSTYPE in
+    darwin*) "$DOTFILES_MV_CMD" -fh "$replace_source" "$replace_destination" ;;
+    linux*) "$DOTFILES_MV_CMD" -Tf "$replace_source" "$replace_destination" ;;
+    *)
+      dotfiles_error 'unsupported platform for atomic path replacement'
+      return 2
+      ;;
+  esac
+}
+
+cleanup_completion_transaction() {
+  transaction_status=$?
+  trap - EXIT HUP INT TERM
+
+  if [ "$completion_committed" -ne 1 ]; then
+    if [ "$completion_scaffold_started" -eq 1 ]; then
+      if [ "$completion_had_pointer" -eq 1 ]; then
+        rm -f "$completion_restore_link"
+        ln -s "$completion_old_pointer" "$completion_restore_link"
+        DOTFILES_MV_CMD=mv dotfiles_atomic_replace \
+          "$completion_restore_link" "$completion_pointer"
+      else
+        rm -f "$completion_pointer"
+      fi
+
+      for completion_name in _herdr _uv _uvx; do
+        rm -f "$completion_dir/.$completion_name.next.$$"
+        rm -f "$completion_dir/$completion_name"
+        if [ -e "$completion_backup_dir/.has-$completion_name" ]; then
+          mv "$completion_backup_dir/$completion_name" \
+            "$completion_dir/$completion_name"
+        fi
+      done
+    fi
+    rm -rf "$completion_release_dir"
+  fi
+
+  rm -f "$completion_next_link" "$completion_restore_link"
+  [ -z "$completion_backup_dir" ] || rm -rf "$completion_backup_dir"
+  [ -z "$completion_legacy_dir" ] || rm -rf "$completion_legacy_dir"
+  exit "$transaction_status"
+}
+
+publish_completion_release() (
+  completion_dir=$1
+  completion_release_dir=$2
+  completion_pointer=$completion_dir/.dotfiles-completions-current
+  completion_next_link=$completion_dir/.dotfiles-completions-current.next.$$
+  completion_restore_link=$completion_dir/.dotfiles-completions-current.restore.$$
+  completion_backup_dir=
+  completion_legacy_dir=
+  completion_old_pointer=
+  completion_had_pointer=0
+  completion_scaffold_started=0
+  completion_committed=0
+  trap cleanup_completion_transaction EXIT
+  trap 'exit 1' HUP INT TERM
+
+  if completion_facades_ready "$completion_dir"; then
+    completion_old_pointer=$(readlink "$completion_pointer")
+  else
+    completion_backup_dir=$(mktemp -d "$completion_dir/.dotfiles-completions-backup.XXXXXX")
+    completion_legacy_dir=$(mktemp -d "$completion_dir/.dotfiles-completions-legacy.XXXXXX")
+
+    if [ -e "$completion_pointer" ] || [ -L "$completion_pointer" ]; then
+      if [ ! -L "$completion_pointer" ]; then
+        dotfiles_error "completion pointer is not a symlink: $completion_pointer"
+        return 1
+      fi
+      completion_had_pointer=1
+      completion_old_pointer=$(readlink "$completion_pointer")
+    fi
+
+    for completion_name in _herdr _uv _uvx; do
+      if [ -d "$completion_dir/$completion_name" ] &&
+        [ ! -L "$completion_dir/$completion_name" ]
+      then
+        dotfiles_error "completion path is a directory: $completion_dir/$completion_name"
+        return 1
+      fi
+      if [ -e "$completion_dir/$completion_name" ] ||
+        [ -L "$completion_dir/$completion_name" ]
+      then
+        cp -P "$completion_dir/$completion_name" \
+          "$completion_backup_dir/$completion_name"
+        : >"$completion_backup_dir/.has-$completion_name"
+      fi
+      if [ -r "$completion_dir/$completion_name" ]; then
+        cp "$completion_dir/$completion_name" "$completion_legacy_dir/$completion_name"
+      else
+        cp "$completion_release_dir/$completion_name" "$completion_legacy_dir/$completion_name"
+      fi
+    done
+
+    ln -s "${completion_legacy_dir##*/}" "$completion_next_link"
+    dotfiles_atomic_replace "$completion_next_link" "$completion_pointer"
+    completion_scaffold_started=1
+
+    for completion_name in _herdr _uv _uvx; do
+      completion_facade_next=$completion_dir/.$completion_name.next.$$
+      ln -s ".dotfiles-completions-current/$completion_name" \
+        "$completion_facade_next"
+      dotfiles_atomic_replace "$completion_facade_next" \
+        "$completion_dir/$completion_name"
+    done
+  fi
+
+  rm -f "$completion_next_link"
+  ln -s "${completion_release_dir##*/}" "$completion_next_link"
+  # Ignore interactive termination only across the atomic pointer swap and
+  # commit marker. SIGKILL leaves the published release in place.
+  trap '' HUP INT TERM
+  if dotfiles_atomic_replace "$completion_next_link" "$completion_pointer"; then
+    completion_committed=1
+  else
+    publication_status=$?
+    trap 'exit 1' HUP INT TERM
+    return "$publication_status"
+  fi
+  trap 'exit 1' HUP INT TERM
+
+  case $completion_old_pointer in
+    .dotfiles-completions-release.*|.dotfiles-completions-legacy.*)
+      rm -rf "$completion_dir/$completion_old_pointer"
+      ;;
+  esac
+)
+
 regenerate_completions() (
   completion_dir=${XDG_DATA_HOME:-$HOME/.local/share}/zsh/site-functions
   mkdir -p "$completion_dir"
-  stage_dir=$(mktemp -d "$completion_dir/.dotfiles-completions.XXXXXX")
-  trap 'rm -rf "$stage_dir"' EXIT HUP INT TERM
+  completion_release_dir=$(mktemp -d "$completion_dir/.dotfiles-completions-release.XXXXXX")
+  trap 'rm -rf "$completion_release_dir"' HUP INT TERM
 
   herdr_cmd=$(dotfiles_tool_path herdr)
   uv_cmd=$(dotfiles_tool_path uv)
   uvx_cmd=$(dotfiles_tool_path uvx)
-  "$herdr_cmd" completion zsh >"$stage_dir/_herdr"
-  "$uv_cmd" generate-shell-completion zsh >"$stage_dir/_uv"
-  "$uvx_cmd" --generate-shell-completion zsh >"$stage_dir/_uvx"
+  if ! "$herdr_cmd" completion zsh >"$completion_release_dir/_herdr" ||
+    ! "$uv_cmd" generate-shell-completion zsh >"$completion_release_dir/_uv" ||
+    ! "$uvx_cmd" --generate-shell-completion zsh >"$completion_release_dir/_uvx"
+  then
+    rm -rf "$completion_release_dir"
+    return 1
+  fi
 
-  chmod 0644 "$stage_dir/_herdr" "$stage_dir/_uv" "$stage_dir/_uvx"
-  mv "$stage_dir/_herdr" "$completion_dir/_herdr"
-  mv "$stage_dir/_uv" "$completion_dir/_uv"
-  mv "$stage_dir/_uvx" "$completion_dir/_uvx"
+  chmod 0644 "$completion_release_dir/_herdr" \
+    "$completion_release_dir/_uv" "$completion_release_dir/_uvx"
+  publish_completion_release "$completion_dir" "$completion_release_dir"
 )
 
 diagnose_common() {

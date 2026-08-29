@@ -10,6 +10,7 @@ DOTFILES_DEBIAN_SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &
 DOTFILES_APT_GET_CMD=${DOTFILES_APT_GET_CMD:-apt-get}
 DOTFILES_DPKG_QUERY_CMD=${DOTFILES_DPKG_QUERY_CMD:-dpkg-query}
 DOTFILES_SUDO_CMD=${DOTFILES_SUDO_CMD-sudo}
+DOTFILES_ID_CMD=${DOTFILES_ID_CMD:-id}
 DOTFILES_UNAME_CMD=${DOTFILES_UNAME_CMD:-uname}
 DOTFILES_TAR_CMD=${DOTFILES_TAR_CMD:-tar}
 DOTFILES_OS_RELEASE_FILE=${DOTFILES_OS_RELEASE_FILE:-/etc/os-release}
@@ -36,10 +37,12 @@ require_debian_family() {
 }
 
 dotfiles_run_as_root() {
-  if [ -n "$DOTFILES_SUDO_CMD" ]; then
-    "$DOTFILES_SUDO_CMD" env DEBIAN_FRONTEND=noninteractive "$@"
-  else
+  local effective_uid
+  effective_uid=$("$DOTFILES_ID_CMD" -u)
+  if [ "$effective_uid" = 0 ] || [ -z "$DOTFILES_SUDO_CMD" ]; then
     DEBIAN_FRONTEND=noninteractive "$@"
+  else
+    "$DOTFILES_SUDO_CMD" env DEBIAN_FRONTEND=noninteractive "$@"
   fi
 }
 

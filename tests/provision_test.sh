@@ -174,6 +174,99 @@ EOF
     'UVX completion changed after generation failed'
 }
 
+test_completion_publication_failure_preserves_existing_set() {
+  home="$TEST_TMP_ROOT/publication-home"
+  bin="$TEST_TMP_ROOT/publication-bin"
+  completion_dir="$home/.local/share/zsh/site-functions"
+  mv_count="$TEST_TMP_ROOT/publication-mv-count"
+  mkdir -p "$bin" "$completion_dir"
+
+  cat >"$bin/herdr" <<'EOF'
+#!/bin/sh
+printf '%s herdr\n' "$COMPLETION_VERSION"
+EOF
+  cat >"$bin/uv" <<'EOF'
+#!/bin/sh
+printf '%s uv\n' "$COMPLETION_VERSION"
+EOF
+  cat >"$bin/uvx" <<'EOF'
+#!/bin/sh
+printf '%s uvx\n' "$COMPLETION_VERSION"
+EOF
+  cat >"$bin/failing-mv" <<'EOF'
+#!/bin/sh
+set -eu
+count=0
+if [ -r "$DOTFILES_TEST_MV_COUNT" ]; then
+  count=$(cat "$DOTFILES_TEST_MV_COUNT")
+fi
+count=$((count + 1))
+printf '%s\n' "$count" >"$DOTFILES_TEST_MV_COUNT"
+if [ "$count" -eq 1 ]; then
+  exit 73
+fi
+exec /bin/mv "$@"
+EOF
+  chmod +x "$bin/herdr" "$bin/uv" "$bin/uvx" "$bin/failing-mv"
+
+  HOME="$home" PATH="$bin:/usr/bin:/bin" COMPLETION_VERSION=old \
+    bash -c '. "$1/scripts/provision-common.sh"; regenerate_completions' shell "$REPO_ROOT"
+  assert_equals 'old herdr' "$(cat "$completion_dir/_herdr")" 'initial Herdr completion is wrong'
+  assert_equals 'old uv' "$(cat "$completion_dir/_uv")" 'initial UV completion is wrong'
+  assert_equals 'old uvx' "$(cat "$completion_dir/_uvx")" 'initial UVX completion is wrong'
+
+  set +e
+  HOME="$home" PATH="$bin:/usr/bin:/bin" COMPLETION_VERSION=new \
+    DOTFILES_MV_CMD="$bin/failing-mv" DOTFILES_TEST_MV_COUNT="$mv_count" \
+    bash -c '. "$1/scripts/provision-common.sh"; regenerate_completions' shell "$REPO_ROOT"
+  status=$?
+  set -e
+  [ "$status" -ne 0 ] || fail 'completion replacement unexpectedly succeeded'
+  assert_equals 'old herdr' "$(cat "$completion_dir/_herdr")" \
+    'Herdr completion changed after publication failed'
+  assert_equals 'old uv' "$(cat "$completion_dir/_uv")" \
+    'UV completion changed after publication failed'
+  assert_equals 'old uvx' "$(cat "$completion_dir/_uvx")" \
+    'UVX completion changed after publication failed'
+
+  HOME="$home" PATH="$bin:/usr/bin:/bin" COMPLETION_VERSION=new \
+    bash -c '. "$1/scripts/provision-common.sh"; regenerate_completions' shell "$REPO_ROOT"
+  assert_equals 'new herdr' "$(cat "$completion_dir/_herdr")" 'Herdr completion was not published'
+  assert_equals 'new uv' "$(cat "$completion_dir/_uv")" 'UV completion was not published'
+  assert_equals 'new uvx' "$(cat "$completion_dir/_uvx")" 'UVX completion was not published'
+  [ -L "$completion_dir/_herdr" ] && [ -L "$completion_dir/_uv" ] &&
+    [ -L "$completion_dir/_uvx" ] || fail 'completion facade links are incomplete'
+}
+
+test_incomplete_uv_installation_is_not_replaced() {
+  home="$TEST_TMP_ROOT/incomplete-uv-home"
+  bin="$TEST_TMP_ROOT/incomplete-uv-bin"
+  curl_marker="$TEST_TMP_ROOT/incomplete-uv-curl-ran"
+  mkdir -p "$home" "$bin"
+  cat >"$bin/uv" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+  cat >"$bin/curl" <<'EOF'
+#!/bin/sh
+: >"$DOTFILES_TEST_CURL_MARKER"
+exit 99
+EOF
+  chmod +x "$bin/uv" "$bin/curl"
+
+  set +e
+  diagnostic=$(HOME="$home" PATH="$bin:/usr/bin:/bin" \
+    DOTFILES_CURL_CMD="$bin/curl" DOTFILES_TEST_CURL_MARKER="$curl_marker" \
+    bash -c '. "$1/scripts/provision-common.sh"; install_uv_if_missing' shell "$REPO_ROOT" 2>&1)
+  status=$?
+  set -e
+  [ "$status" -ne 0 ] || fail 'incomplete UV installation was accepted'
+  assert_equals \
+    'dotfiles: uv is installed but uvx is missing; refusing to replace the existing UV installation' \
+    "$diagnostic" 'incomplete UV diagnostic is not precise'
+  [ ! -e "$curl_marker" ] || fail 'incomplete UV installation was silently replaced'
+}
+
 test_failed_remote_installer_cleans_temp_directory() {
   home="$TEST_TMP_ROOT/failed-installer-home"
   bin="$TEST_TMP_ROOT/failed-installer-bin"
@@ -361,6 +454,33 @@ EOF
   assert_equals "$before" "$after" 'existing managed Neovim was unexpectedly replaced'
 }
 
+test_root_debian_provisioning_does_not_require_sudo() {
+  home="$TEST_TMP_ROOT/root-debian-home"
+  bin="$TEST_TMP_ROOT/root-debian-bin"
+  apt_marker="$TEST_TMP_ROOT/root-debian-apt-ran"
+  mkdir -p "$home" "$bin"
+  cat >"$bin/id" <<'EOF'
+#!/bin/sh
+[ "$1" = -u ]
+printf '0\n'
+EOF
+  cat >"$bin/sudo" <<'EOF'
+#!/bin/sh
+exit 91
+EOF
+  cat >"$bin/apt-get" <<'EOF'
+#!/bin/sh
+: >"$DOTFILES_TEST_APT_MARKER"
+exit 0
+EOF
+  chmod +x "$bin/id" "$bin/sudo" "$bin/apt-get"
+
+  HOME="$home" PATH="$bin:/usr/bin:/bin" DOTFILES_ID_CMD="$bin/id" \
+    DOTFILES_APT_GET_CMD="$bin/apt-get" DOTFILES_TEST_APT_MARKER="$apt_marker" \
+    bash -c '. "$1/scripts/provision-debian.sh"; provision_debian_packages' shell "$REPO_ROOT"
+  [ -e "$apt_marker" ] || fail 'root Debian provisioning did not invoke apt-get directly'
+}
+
 test_arm64_archive_name_and_read_only_diagnostics() {
   home="$TEST_TMP_ROOT/diagnostic-home"
   bin="$TEST_TMP_ROOT/diagnostic-bin"
@@ -390,9 +510,12 @@ EOF
 
 test_common_provisioning_is_idempotent_and_regenerates_completions
 test_completion_failure_preserves_existing_set
+test_completion_publication_failure_preserves_existing_set
+test_incomplete_uv_installation_is_not_replaced
 test_failed_remote_installer_cleans_temp_directory
 test_failed_neovim_download_cleans_temp_directory
 test_macos_packages_require_brew_and_never_upgrade
 test_debian_archive_install_and_fd_link
+test_root_debian_provisioning_does_not_require_sudo
 test_arm64_archive_name_and_read_only_diagnostics
 printf 'ok - provisioning behavior\n'
