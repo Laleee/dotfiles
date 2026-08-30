@@ -29,14 +29,30 @@ provision_macos() {
   regenerate_completions
 }
 
+diagnose_brewfile_formulas() {
+  local diagnostic_status=0
+  local formula
+
+  if [ ! -r "$DOTFILES_BREWFILE" ]; then
+    dotfiles_error "Brewfile is not readable: $DOTFILES_BREWFILE"
+    return 1
+  fi
+
+  while IFS= read -r formula; do
+    if ! "$DOTFILES_BREW_CMD" list --versions "$formula" >/dev/null 2>&1; then
+      dotfiles_error "missing Brewfile formula: $formula"
+      diagnostic_status=1
+    fi
+  done < <(sed -n 's/^[[:space:]]*brew[[:space:]]*"\([^"]*\)".*/\1/p' "$DOTFILES_BREWFILE")
+
+  return "$diagnostic_status"
+}
+
 diagnose_macos() {
   local diagnostic_status=0
   if ! require_homebrew; then
     diagnostic_status=1
-  elif ! HOMEBREW_NO_AUTO_UPDATE=1 "$DOTFILES_BREW_CMD" bundle check \
-    --file="$DOTFILES_BREWFILE" >/dev/null 2>&1
-  then
-    dotfiles_error 'one or more Brewfile dependencies are missing'
+  elif ! diagnose_brewfile_formulas; then
     diagnostic_status=1
   fi
   if ! diagnose_common; then

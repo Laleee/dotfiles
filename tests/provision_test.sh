@@ -473,6 +473,67 @@ EOF
     'Brewfile formulas differ from the required portable toolset'
 }
 
+test_macos_diagnostics_accept_installed_outdated_formulas_and_name_missing_formula() {
+  home="$TEST_TMP_ROOT/macos-diagnostic-home"
+  bin="$TEST_TMP_ROOT/macos-diagnostic-bin"
+  bundle_check_marker="$TEST_TMP_ROOT/macos-bundle-check-ran"
+  formula_calls="$TEST_TMP_ROOT/macos-diagnostic-formula-calls"
+  mkdir -p "$home" "$bin"
+
+  cat >"$bin/brew" <<'EOF'
+#!/bin/sh
+set -eu
+case $1 in
+  bundle)
+    [ "$2" = check ]
+    : >"$DOTFILES_TEST_BUNDLE_CHECK_MARKER"
+    exit 1
+    ;;
+  list)
+    [ "$2" = --versions ]
+    formula=$3
+    printf '%s\n' "$formula" >>"$DOTFILES_TEST_FORMULA_CALLS"
+    if [ "$formula" = "${DOTFILES_TEST_MISSING_FORMULA:-}" ]; then
+      exit 1
+    fi
+    printf '%s 1.0\n' "$formula"
+    ;;
+  *) exit 64 ;;
+esac
+EOF
+  chmod +x "$bin/brew"
+
+  set +e
+  diagnostic=$(HOME="$home" PATH="$bin:/usr/bin:/bin" \
+    DOTFILES_BREW_CMD="$bin/brew" DOTFILES_TEST_BUNDLE_CHECK_MARKER="$bundle_check_marker" \
+    DOTFILES_TEST_FORMULA_CALLS="$formula_calls" \
+    bash -c '. "$1/scripts/provision-macos.sh"; diagnose_common() { return 0; }; diagnose_macos' \
+    shell "$REPO_ROOT" 2>&1)
+  status=$?
+  set -e
+  assert_equals 0 "$status" \
+    'macOS diagnostics rejected installed formulas because bundle check considered them outdated'
+  assert_equals '' "$diagnostic" \
+    'macOS diagnostics emitted an error for installed formulas'
+  [ ! -e "$bundle_check_marker" ] ||
+    fail 'macOS diagnostics invoked currency-based brew bundle check'
+  assert_equals "$(sed -n 's/^brew "\([^"]*\)"$/\1/p' "$REPO_ROOT/Brewfile" | sort)" \
+    "$(sort -u "$formula_calls")" \
+    'macOS diagnostics did not check every Brewfile formula by installed presence'
+
+  set +e
+  diagnostic=$(HOME="$home" PATH="$bin:/usr/bin:/bin" \
+    DOTFILES_BREW_CMD="$bin/brew" DOTFILES_TEST_BUNDLE_CHECK_MARKER="$bundle_check_marker" \
+    DOTFILES_TEST_FORMULA_CALLS="$formula_calls" DOTFILES_TEST_MISSING_FORMULA=fd \
+    bash -c '. "$1/scripts/provision-macos.sh"; diagnose_common() { return 0; }; diagnose_macos' \
+    shell "$REPO_ROOT" 2>&1)
+  status=$?
+  set -e
+  [ "$status" -ne 0 ] || fail 'macOS diagnostics accepted a missing Brewfile formula'
+  assert_equals 'dotfiles: missing Brewfile formula: fd' "$diagnostic" \
+    'macOS diagnostics did not name the missing Brewfile formula precisely'
+}
+
 make_nvim_fixture() {
   architecture=$1
   fixture_root="$TEST_TMP_ROOT/nvim-fixture-$architecture"
@@ -631,6 +692,7 @@ test_incomplete_uv_installation_is_not_replaced
 test_failed_remote_installer_cleans_temp_directory
 test_failed_neovim_download_cleans_temp_directory
 test_macos_packages_require_brew_and_never_upgrade
+test_macos_diagnostics_accept_installed_outdated_formulas_and_name_missing_formula
 test_debian_archive_install_and_fd_link
 test_root_debian_provisioning_does_not_require_sudo
 test_arm64_archive_name_and_read_only_diagnostics
