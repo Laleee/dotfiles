@@ -25,6 +25,77 @@ dotfiles_tool_path() {
   fi
 }
 
+dotfiles_data_home() {
+  case ${XDG_DATA_HOME:-} in
+    /*) printf '%s\n' "$XDG_DATA_HOME" ;;
+    *) printf '%s\n' "$HOME/.local/share" ;;
+  esac
+}
+
+dotfiles_neovim_version_is_supported() {
+  local version=$1
+  local major
+  local minor
+  local patch
+  local remainder
+  case $version in
+    *.*.*) ;;
+    *) return 1 ;;
+  esac
+  major=${version%%.*}
+  remainder=${version#*.}
+  minor=${remainder%%.*}
+  patch=${remainder#*.}
+  case $patch in
+    *.*) return 1 ;;
+  esac
+  [ -n "$major" ] && [ -n "$minor" ] && [ -n "$patch" ] || return 1
+  case $major:$minor:$patch in
+    *[!0-9:]*) return 1 ;;
+  esac
+  if [ "$major" -gt 0 ] || [ "$minor" -gt 11 ]; then
+    return 0
+  fi
+  [ "$major" -eq 0 ] && [ "$minor" -eq 11 ] && [ "$patch" -ge 2 ]
+}
+
+diagnose_neovim_version() {
+  local nvim_cmd
+  local nvim_output
+  local version_line
+  local version
+  if ! nvim_cmd=$(dotfiles_tool_path nvim 2>/dev/null); then
+    dotfiles_error 'missing command: nvim; install Neovim 0.11.2 or newer manually'
+    return 1
+  fi
+  if ! nvim_output=$("$nvim_cmd" --version 2>/dev/null); then
+    dotfiles_error "Neovim command is unusable: $nvim_cmd"
+    return 1
+  fi
+  version_line=$(printf '%s\n' "$nvim_output" | sed -n '1p')
+  case $version_line in
+    'NVIM v'*) version=${version_line#NVIM v} ;;
+    *)
+      dotfiles_error "cannot determine Neovim version from: $nvim_cmd"
+      return 1
+      ;;
+  esac
+  version=${version%%-*}
+  if ! dotfiles_neovim_version_is_supported "$version"; then
+    dotfiles_error \
+      "Neovim $version is below required 0.11.2; update Neovim manually (bootstrap does not upgrade existing installations)"
+    return 1
+  fi
+}
+
+diagnose_tree_sitter_cli() {
+  local guidance=$1
+  if ! dotfiles_tool_path tree-sitter >/dev/null 2>&1; then
+    dotfiles_error "missing command: tree-sitter; $guidance"
+    return 1
+  fi
+}
+
 install_remote_script() (
   installer_url=$1
   installer_name=$2
@@ -158,7 +229,7 @@ publish_completion_release() (
 )
 
 regenerate_completions() (
-  completion_dir=${XDG_DATA_HOME:-$HOME/.local/share}/zsh/site-functions
+  completion_dir=$(dotfiles_data_home)/zsh/site-functions
   mkdir -p "$completion_dir"
   completion_release_dir=$(mktemp -d "$completion_dir/.dotfiles-completions-release.XXXXXX")
   trap 'rm -rf "$completion_release_dir"' HUP INT TERM
@@ -185,8 +256,12 @@ diagnose_common() {
   local omz_dir
   local custom_dir
   local dependency_path
+  local data_home
   local completion_dir
   local completion_name
+  if ! diagnose_neovim_version; then
+    diagnostic_status=1
+  fi
   for tool_name in uv uvx herdr; do
     if ! dotfiles_tool_path "$tool_name" >/dev/null 2>&1; then
       dotfiles_error "missing command: $tool_name"
@@ -207,7 +282,8 @@ diagnose_common() {
     fi
   done
 
-  completion_dir=${XDG_DATA_HOME:-$HOME/.local/share}/zsh/site-functions/.dotfiles-completions-current
+  data_home=$(dotfiles_data_home)
+  completion_dir=$data_home/zsh/site-functions/.dotfiles-completions-current
   for completion_name in _herdr _uv _uvx; do
     if [ ! -s "$completion_dir/$completion_name" ]; then
       dotfiles_error "missing completion: $completion_dir/$completion_name"

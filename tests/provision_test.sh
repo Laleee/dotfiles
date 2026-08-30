@@ -136,6 +136,34 @@ test_common_provisioning_is_idempotent_and_regenerates_completions() {
   assert_file_contains "$completion_dir/_uv" 'uv completion'
 }
 
+test_relative_xdg_data_home_publishes_completions_inside_home() {
+  home="$TEST_TMP_ROOT/relative-data-home"
+  work="$TEST_TMP_ROOT/relative-data-work"
+  bin="$TEST_TMP_ROOT/relative-data-bin"
+  completion_dir="$home/.local/share/zsh/site-functions/.dotfiles-completions-current"
+  mkdir -p "$home" "$work" "$bin"
+
+  for tool_name in herdr uv uvx; do
+    cat >"$bin/$tool_name" <<'EOF'
+#!/bin/sh
+printf '%s completion\n' "${0##*/}"
+EOF
+    chmod +x "$bin/$tool_name"
+  done
+
+  (
+    cd "$work"
+    HOME="$home" XDG_DATA_HOME=relative-data PATH="$bin:/usr/bin:/bin" \
+      bash -c '. "$1/scripts/provision-common.sh"; regenerate_completions' \
+      shell "$REPO_ROOT"
+  )
+
+  assert_equals 'herdr completion' "$(cat "$completion_dir/_herdr")" \
+    'relative XDG_DATA_HOME did not fall back to home-local completion storage'
+  [ ! -e "$work/relative-data" ] ||
+    fail 'relative XDG_DATA_HOME published completions relative to the working directory'
+}
+
 test_completion_failure_preserves_existing_set() {
   home="$TEST_TMP_ROOT/atomic-home"
   bin="$TEST_TMP_ROOT/atomic-bin"
@@ -352,6 +380,20 @@ test_zsh_uses_atomic_completion_directory() {
   [ "$status" -eq 0 ] || fail 'Zsh fpath does not use the atomic completion directory'
 }
 
+test_zsh_falls_back_from_relative_xdg_data_home() {
+  home="$TEST_TMP_ROOT/zsh-relative-data-home"
+  mkdir -p "$home"
+  set +e
+  HOME="$home" XDG_DATA_HOME=relative-data ZSH="$home/missing-oh-my-zsh" \
+    ZSH_CUSTOM="$home/missing-oh-my-zsh/custom" zsh -dfc \
+    'source "$1"; [[ ${fpath[1]} == "$HOME/.local/share/zsh/site-functions/.dotfiles-completions-current" ]]' \
+    zsh "$REPO_ROOT/zsh/.zshrc"
+  status=$?
+  set -e
+  [ "$status" -eq 0 ] ||
+    fail 'Zsh accepted a relative XDG_DATA_HOME for completion discovery'
+}
+
 test_zsh_discovers_generated_completions_through_the_atomic_pointer() {
   home="$TEST_TMP_ROOT/zsh-completion-discovery-home"
   completion_root="$home/.local/share/zsh/site-functions"
@@ -416,6 +458,51 @@ EOF
     'dotfiles: uv is installed but uvx is missing; refusing to replace the existing UV installation' \
     "$diagnostic" 'incomplete UV diagnostic is not precise'
   [ ! -e "$curl_marker" ] || fail 'incomplete UV installation was silently replaced'
+}
+
+test_common_diagnostics_reject_outdated_neovim_with_manual_guidance() {
+  home="$TEST_TMP_ROOT/outdated-nvim-home"
+  bin="$TEST_TMP_ROOT/outdated-nvim-bin"
+  completion_dir="$home/.local/share/zsh/site-functions/.dotfiles-completions-current"
+  mkdir -p "$bin" "$home/.oh-my-zsh/custom/plugins/zsh-autosuggestions" \
+    "$home/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting" "$completion_dir"
+  : >"$home/.oh-my-zsh/oh-my-zsh.sh"
+  : >"$home/.oh-my-zsh/custom/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh"
+  : >"$home/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
+  for completion_name in _herdr _uv _uvx; do
+    printf 'completion\n' >"$completion_dir/$completion_name"
+  done
+  for tool_name in uv uvx herdr; do
+    cat >"$bin/$tool_name" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+  done
+  cat >"$bin/nvim" <<'EOF'
+#!/bin/sh
+printf 'NVIM v0.10.4\n'
+EOF
+  chmod +x "$bin/uv" "$bin/uvx" "$bin/herdr" "$bin/nvim"
+
+  set +e
+  diagnostic=$(HOME="$home" PATH="$bin:/usr/bin:/bin" \
+    bash -c '. "$1/scripts/provision-common.sh"; diagnose_common' \
+    shell "$REPO_ROOT" 2>&1)
+  status=$?
+  set -e
+
+  assert_equals 1 "$status" 'common diagnostics accepted Neovim below 0.11.2'
+  assert_equals \
+    'dotfiles: Neovim 0.10.4 is below required 0.11.2; update Neovim manually (bootstrap does not upgrade existing installations)' \
+    "$diagnostic" 'outdated Neovim guidance is not precise'
+
+  cat >"$bin/nvim" <<'EOF'
+#!/bin/sh
+printf 'NVIM v0.11.2\n'
+EOF
+  chmod +x "$bin/nvim"
+  HOME="$home" PATH="$bin:/usr/bin:/bin" bash -c \
+    '. "$1/scripts/provision-common.sh"; diagnose_common' shell "$REPO_ROOT"
 }
 
 test_failed_remote_installer_cleans_temp_directory() {
@@ -539,7 +626,11 @@ case $1 in
   *) exit 64 ;;
 esac
 EOF
-  chmod +x "$bin/brew"
+  cat >"$bin/tree-sitter" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+  chmod +x "$bin/brew" "$bin/tree-sitter"
 
   set +e
   diagnostic=$(HOME="$home" PATH="$bin:/usr/bin:/bin" \
@@ -572,6 +663,34 @@ EOF
     'macOS diagnostics did not name the missing Brewfile formula precisely'
 }
 
+test_macos_diagnostics_require_usable_tree_sitter_command() {
+  home="$TEST_TMP_ROOT/macos-tree-sitter-home"
+  bin="$TEST_TMP_ROOT/macos-tree-sitter-bin"
+  mkdir -p "$home" "$bin"
+  cat >"$bin/brew" <<'EOF'
+#!/bin/sh
+set -eu
+[ "$1 $2" = "list --versions" ]
+printf '%s 1.0\n' "$3"
+EOF
+  chmod +x "$bin/brew"
+
+  set +e
+  diagnostic=$(HOME="$home" PATH="$bin:/usr/bin:/bin" \
+    DOTFILES_BREW_CMD="$bin/brew" bash -c '
+      . "$1/scripts/provision-macos.sh"
+      diagnose_common() { :; }
+      diagnose_macos
+    ' shell "$REPO_ROOT" 2>&1)
+  status=$?
+  set -e
+
+  assert_equals 1 "$status" 'macOS diagnostics accepted unusable Tree-sitter CLI'
+  assert_equals \
+    'dotfiles: missing command: tree-sitter; install the tree-sitter-cli Homebrew formula manually' \
+    "$diagnostic" 'macOS Tree-sitter diagnostic guidance is not precise'
+}
+
 make_nvim_fixture() {
   architecture=$1
   fixture_root="$TEST_TMP_ROOT/nvim-fixture-$architecture"
@@ -584,6 +703,126 @@ EOF
   chmod +x "$fixture_root/nvim-linux-$architecture/bin/nvim"
   tar -C "$fixture_root" -czf "$archive" "nvim-linux-$architecture"
   printf '%s\n' "$archive"
+}
+
+test_debian_provision_publishes_nvim_without_overwriting_existing_path() {
+  home="$TEST_TMP_ROOT/nvim-link-home"
+  bin="$TEST_TMP_ROOT/nvim-link-bin"
+  existing_home="$TEST_TMP_ROOT/nvim-existing-link-home"
+  mkdir -p "$home/.local/opt/nvim/bin" "$bin" \
+    "$existing_home/.local/opt/nvim/bin" "$existing_home/.local/bin"
+  cat >"$home/.local/opt/nvim/bin/nvim" <<'EOF'
+#!/bin/sh
+printf 'managed nvim\n'
+EOF
+  cp "$home/.local/opt/nvim/bin/nvim" "$existing_home/.local/opt/nvim/bin/nvim"
+  cat >"$existing_home/.local/bin/nvim" <<'EOF'
+#!/bin/sh
+printf 'existing nvim\n'
+EOF
+  chmod +x "$home/.local/opt/nvim/bin/nvim" \
+    "$existing_home/.local/opt/nvim/bin/nvim" "$existing_home/.local/bin/nvim"
+
+  for provision_home in "$home" "$existing_home"; do
+    HOME="$provision_home" PATH="$bin:/usr/bin:/bin" bash -c '
+      . "$1/scripts/provision-debian.sh"
+      require_debian_family() { :; }
+      provision_debian_packages() { :; }
+      install_neovim_archive() { :; }
+      ensure_fd_link() { :; }
+      install_tree_sitter_cli_if_missing() { :; }
+      provision_common() { :; }
+      regenerate_completions() { :; }
+      provision_debian
+    ' shell "$REPO_ROOT"
+  done
+
+  [ -L "$home/.local/bin/nvim" ] || fail 'managed Neovim was not published on PATH'
+  assert_equals "$home/.local/opt/nvim/bin/nvim" "$(readlink "$home/.local/bin/nvim")" \
+    'managed Neovim link points at the wrong executable'
+  assert_equals 'managed nvim' \
+    "$(PATH="$home/.local/bin:$bin:/usr/bin:/bin" nvim)" \
+    'published Neovim is not usable through the deployed PATH'
+  [ ! -L "$existing_home/.local/bin/nvim" ] ||
+    fail 'provisioning overwrote an existing Neovim path'
+  assert_equals 'existing nvim' "$("$existing_home/.local/bin/nvim")" \
+    'provisioning changed an existing Neovim command'
+}
+
+test_debian_tree_sitter_cli_is_installed_once_in_user_prefix() {
+  home="$TEST_TMP_ROOT/tree-sitter-home"
+  bin="$TEST_TMP_ROOT/tree-sitter-bin"
+  receipt="$TEST_TMP_ROOT/tree-sitter-npm-receipt"
+  mkdir -p "$home" "$bin"
+  cat >"$bin/npm" <<'EOF'
+#!/bin/sh
+set -eu
+printf '%s\n' "$*" >>"$DOTFILES_TEST_NPM_RECEIPT"
+[ "$1 $2 $3" = "install --global --prefix" ]
+[ "$4" = "$HOME/.local" ]
+[ "$5" = tree-sitter-cli ]
+mkdir -p "$HOME/.local/bin"
+cat >"$HOME/.local/bin/tree-sitter" <<'TOOL'
+#!/bin/sh
+printf 'tree-sitter 0.25.0\n'
+TOOL
+chmod +x "$HOME/.local/bin/tree-sitter"
+EOF
+  chmod +x "$bin/npm"
+
+  for _run_number in 1 2; do
+    HOME="$home" PATH="$bin:/usr/bin:/bin" \
+      DOTFILES_TEST_NPM_RECEIPT="$receipt" bash -c '
+        . "$1/scripts/provision-debian.sh"
+        require_debian_family() { :; }
+        provision_debian_packages() { :; }
+        install_neovim_archive() { :; }
+        ensure_nvim_link() { :; }
+        ensure_fd_link() { :; }
+        provision_common() { :; }
+        regenerate_completions() { :; }
+        provision_debian
+      ' shell "$REPO_ROOT"
+  done
+
+  assert_equals 1 "$(wc -l <"$receipt" | tr -d ' ')" \
+    'existing Tree-sitter CLI was silently upgraded'
+  assert_equals "install --global --prefix $home/.local tree-sitter-cli" \
+    "$(cat "$receipt")" 'Tree-sitter CLI used the wrong npm installation contract'
+  assert_equals 'tree-sitter 0.25.0' \
+    "$(PATH="$home/.local/bin:$bin:/usr/bin:/bin" tree-sitter --version)" \
+    'Tree-sitter CLI is not usable from the deployed PATH'
+}
+
+test_debian_diagnostics_require_tree_sitter_cli_with_install_guidance() {
+  home="$TEST_TMP_ROOT/tree-sitter-diagnostic-home"
+  bin="$TEST_TMP_ROOT/tree-sitter-diagnostic-bin"
+  mkdir -p "$home/.local/opt/nvim/bin" "$home/.local/bin" "$bin"
+  for command_path in \
+    "$home/.local/opt/nvim/bin/nvim" "$home/.local/bin/fd"
+  do
+    cat >"$command_path" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+    chmod +x "$command_path"
+  done
+
+  set +e
+  diagnostic=$(HOME="$home" PATH="$home/.local/bin:$bin:/usr/bin:/bin" bash -c '
+    . "$1/scripts/provision-debian.sh"
+    require_debian_family() { :; }
+    diagnose_debian_packages() { :; }
+    diagnose_common() { :; }
+    diagnose_debian
+  ' shell "$REPO_ROOT" 2>&1)
+  status=$?
+  set -e
+
+  assert_equals 1 "$status" 'Debian diagnostics accepted missing Tree-sitter CLI'
+  assert_equals \
+    "dotfiles: missing command: tree-sitter; run npm install --global --prefix $home/.local tree-sitter-cli" \
+    "$diagnostic" 'Debian Tree-sitter diagnostic guidance is not precise'
 }
 
 test_debian_archive_install_and_fd_link() {
@@ -653,7 +892,7 @@ EOF
   assert_equals "$bin/fdfind" "$(readlink "$home/.local/bin/fd")" \
     'fd compatibility link points at the wrong executable'
   assert_equals \
-    'ca-certificates curl git stow fzf zoxide fd-find ripgrep nodejs npm graphviz shellcheck tar xz-utils' \
+    'ca-certificates curl git stow zsh fzf zoxide fd-find ripgrep nodejs npm build-essential graphviz shellcheck tar xz-utils' \
     "$(cat "$receipts/apt-packages")" 'apt package set differs from the required dependencies'
 
   before=$(stat -c %Y "$home/.local/opt/nvim" 2>/dev/null || stat -f %m "$home/.local/opt/nvim")
@@ -721,17 +960,24 @@ EOF
 }
 
 test_common_provisioning_is_idempotent_and_regenerates_completions
+test_relative_xdg_data_home_publishes_completions_inside_home
 test_completion_failure_preserves_existing_set
 test_completion_publication_failure_preserves_existing_set
 test_completion_cleanup_rejects_traversal_pointer_targets
 test_first_completion_publication_has_one_atomic_entry
 test_zsh_uses_atomic_completion_directory
+test_zsh_falls_back_from_relative_xdg_data_home
 test_zsh_discovers_generated_completions_through_the_atomic_pointer
 test_incomplete_uv_installation_is_not_replaced
+test_common_diagnostics_reject_outdated_neovim_with_manual_guidance
 test_failed_remote_installer_cleans_temp_directory
 test_failed_neovim_download_cleans_temp_directory
 test_macos_packages_require_brew_and_never_upgrade
 test_macos_diagnostics_accept_installed_outdated_formulas_and_name_missing_formula
+test_macos_diagnostics_require_usable_tree_sitter_command
+test_debian_provision_publishes_nvim_without_overwriting_existing_path
+test_debian_tree_sitter_cli_is_installed_once_in_user_prefix
+test_debian_diagnostics_require_tree_sitter_cli_with_install_guidance
 test_debian_archive_install_and_fd_link
 test_root_debian_provisioning_does_not_require_sudo
 test_arm64_archive_name_and_read_only_diagnostics

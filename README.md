@@ -16,14 +16,17 @@ cd ~/src/dotfiles
 ```
 
 On macOS, install Homebrew before running the script. On Debian/Ubuntu, the
-script uses `apt-get` through `sudo` when necessary. The script installs only
-missing dependencies, clones only missing shell dependencies, and deploys the
-`zsh`, `nvim`, and `herdr` Stow packages to `$HOME`. It does not silently
-upgrade installed packages or existing clones.
+script uses `apt-get` through `sudo` when necessary and includes `zsh` and the
+`build-essential` compiler toolchain. The script installs only missing
+dependencies, clones only missing shell dependencies, and deploys the `zsh`,
+`nvim`, and `herdr` Stow packages to `$HOME`. It does not silently upgrade
+installed packages, user-local tools, or existing clones.
 
-After provisioning completes, the default run simulates the Stow deployment
-before it creates links. If one of these managed paths already exists but is
-not managed by this repository, it stops without changing it:
+Before provisioning, the default run checks all five managed targets below. If
+one already exists but is not managed by this repository, it prints the exact
+path and stops without provisioning or changing `$HOME`. Once that preflight is
+clear, it provisions, simulates the Stow deployment, and only then creates
+links:
 
 - `~/.zshrc` and `~/.zprofile`
 - `~/.config/nvim`
@@ -38,12 +41,13 @@ Run the read-only preflight at any time:
 ./bootstrap.sh --check
 ```
 
-It checks the platform, package/dependency presence, command availability, and
-static Zsh completions. It does not provision, deploy links, migrate files, or
-change the login shell. Exit status `0` means the checked prerequisites are
-present, `1` means a checked prerequisite is missing, and `2` means an invalid
-argument or unsupported platform. A nonzero result on a fresh machine is useful
-preflight information, not a command to ignore; install the reported
+It checks the platform, package/dependency presence, usable commands, Neovim
+version 0.11.2 or newer, Tree-sitter CLI, and static Zsh completions. It does
+not provision, deploy links, migrate files, upgrade an existing tool, or change
+the login shell. Exit status `0` means the checked prerequisites are present,
+`1` means a checked prerequisite is missing or outdated, and `2` means an
+invalid argument or unsupported platform. A nonzero result on a fresh machine
+is useful preflight information, not a command to ignore; install the reported
 prerequisites with the normal bootstrap flow when ready.
 
 ## Adopt an existing machine
@@ -60,6 +64,10 @@ deploying. The backup is at
 `~/.local/state/dotfiles-backups/<UTC-timestamp>`). The script prints the
 backup path on a successful migration. It attempts an automatic rollback if
 deployment fails.
+
+Only absolute `XDG_STATE_HOME` and `XDG_DATA_HOME` values are honored. Relative
+values safely fall back to `~/.local/state` and `~/.local/share`, respectively,
+so backup and completion paths cannot escape through the working directory.
 
 For a manual rollback, use the backup directory printed by that migration:
 
@@ -117,6 +125,11 @@ or shell plugins should be cleaned up only after the Stow configuration and
 login-shell tools have been verified; cleanup is intentionally outside
 bootstrap.
 
+Bootstrap also leaves an existing Neovim or Tree-sitter CLI installation in
+place. If `./bootstrap.sh --check` reports an old Neovim, update it manually
+through its package manager or the upstream installation procedure; bootstrap
+will not replace it automatically.
+
 Changing the login shell is also manual. After confirming the desired `zsh`
 path is allowed by `/etc/shells`, run the following and then start a new login
 session:
@@ -128,10 +141,21 @@ chsh -s "$(command -v zsh)"
 ## Neovim and optional tools
 
 LazyVim requires Neovim **0.11.2 or newer**. Linux provisioning installs the
-official stable Neovim archive under `~/.local/opt/nvim`; macOS obtains Neovim
-from the Brewfile. LazyVim parser support also requires the Tree-sitter CLI
-(`tree-sitter-cli` on macOS, included in the Brewfile) and a C compiler. A Nerd
-Font v3 is optional but enables editor icons.
+official stable Neovim archive under `~/.local/opt/nvim` and, when the path is
+free, publishes it as `~/.local/bin/nvim`; macOS obtains Neovim from the
+Brewfile. The deployed Zsh configuration adds `~/.local/bin` to `PATH`.
+
+LazyVim parser support also requires the Tree-sitter CLI and a C compiler.
+macOS gets `tree-sitter-cli` from the Brewfile. Debian/Ubuntu gets the compiler
+through `build-essential`; when `tree-sitter` is missing, bootstrap installs it
+once in the user prefix with:
+
+```sh
+npm install --global --prefix "$HOME/.local" tree-sitter-cli
+```
+
+An existing `tree-sitter` command is never silently upgraded. A Nerd Font v3
+is optional but enables editor icons.
 `lazygit` is optional for the editor integration; it is included in the macOS
 Brewfile and can be installed separately on Linux if desired.
 

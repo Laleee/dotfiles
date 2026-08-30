@@ -11,7 +11,13 @@ SAVEHIST=50000
 # Static completions are installed separately; expose them before Oh My Zsh
 # initializes completion.
 typeset -U fpath
-fpath=("${XDG_DATA_HOME:-$HOME/.local/share}/zsh/site-functions/.dotfiles-completions-current" $fpath)
+if [[ ${XDG_DATA_HOME:-} == /* ]]; then
+  _dotfiles_data_home=$XDG_DATA_HOME
+else
+  _dotfiles_data_home=$HOME/.local/share
+fi
+fpath=("$_dotfiles_data_home/zsh/site-functions/.dotfiles-completions-current" $fpath)
+unset _dotfiles_data_home
 
 # Enable only plugins that are available. Custom plugins use the conventional
 # Oh My Zsh locations under $ZSH_CUSTOM/plugins.

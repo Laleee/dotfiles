@@ -13,9 +13,10 @@ DOTFILES_SUDO_CMD=${DOTFILES_SUDO_CMD-sudo}
 DOTFILES_ID_CMD=${DOTFILES_ID_CMD:-id}
 DOTFILES_UNAME_CMD=${DOTFILES_UNAME_CMD:-uname}
 DOTFILES_TAR_CMD=${DOTFILES_TAR_CMD:-tar}
+DOTFILES_NPM_CMD=${DOTFILES_NPM_CMD:-npm}
 DOTFILES_OS_RELEASE_FILE=${DOTFILES_OS_RELEASE_FILE:-/etc/os-release}
 DOTFILES_NEOVIM_RELEASE_BASE_URL=${DOTFILES_NEOVIM_RELEASE_BASE_URL:-https://github.com/neovim/neovim/releases/download/stable}
-DOTFILES_APT_PACKAGES='ca-certificates curl git stow fzf zoxide fd-find ripgrep nodejs npm graphviz shellcheck tar xz-utils'
+DOTFILES_APT_PACKAGES='ca-certificates curl git stow zsh fzf zoxide fd-find ripgrep nodejs npm build-essential graphviz shellcheck tar xz-utils'
 
 require_debian_family() {
   local distribution_id
@@ -99,6 +100,20 @@ install_neovim_archive() (
   mv "$temp_dir/$archive_root" "$install_dir"
 )
 
+ensure_nvim_link() {
+  local nvim_source=$HOME/.local/opt/nvim/bin/nvim
+  local nvim_link=$HOME/.local/bin/nvim
+  if [ ! -x "$nvim_source" ]; then
+    dotfiles_error "managed Neovim executable is missing: $nvim_source"
+    return 1
+  fi
+  if [ -e "$nvim_link" ] || [ -L "$nvim_link" ]; then
+    return 0
+  fi
+  mkdir -p "$HOME/.local/bin"
+  ln -s "$nvim_source" "$nvim_link"
+}
+
 ensure_fd_link() {
   local fd_link=$HOME/.local/bin/fd
   local fdfind_path
@@ -113,11 +128,24 @@ ensure_fd_link() {
   ln -s "$fdfind_path" "$fd_link"
 }
 
+install_tree_sitter_cli_if_missing() {
+  if dotfiles_tool_path tree-sitter >/dev/null 2>&1; then
+    return 0
+  fi
+  "$DOTFILES_NPM_CMD" install --global --prefix "$HOME/.local" tree-sitter-cli
+  if [ ! -x "$HOME/.local/bin/tree-sitter" ]; then
+    dotfiles_error 'npm did not publish the Tree-sitter CLI under ~/.local/bin'
+    return 1
+  fi
+}
+
 provision_debian() {
   require_debian_family
   provision_debian_packages
   install_neovim_archive
+  ensure_nvim_link
   ensure_fd_link
+  install_tree_sitter_cli_if_missing
   provision_common
   regenerate_completions
 }
@@ -150,6 +178,11 @@ diagnose_debian() {
   fi
   if [ ! -x "$HOME/.local/bin/fd" ]; then
     dotfiles_error 'missing fd compatibility command'
+    diagnostic_status=1
+  fi
+  if ! diagnose_tree_sitter_cli \
+    "run npm install --global --prefix $HOME/.local tree-sitter-cli"
+  then
     diagnostic_status=1
   fi
   if ! diagnose_common; then

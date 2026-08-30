@@ -30,6 +30,17 @@ bootstrap_usage() {
   bootstrap_error "usage: $0 [--check|--migrate]"
 }
 
+dotfiles_validate_timestamp_override() {
+  case ${DOTFILES_TIMESTAMP:-} in
+    '') return 0 ;;
+    .|..|*/*|*[!A-Za-z0-9._-]*)
+      bootstrap_error 'DOTFILES_TIMESTAMP must be one safe basename'
+      return 2
+      ;;
+    *) return 0 ;;
+  esac
+}
+
 dotfiles_detect_architecture() {
   local machine_architecture
   if ! machine_architecture=$("$DOTFILES_UNAME_CMD" -m); then
@@ -124,6 +135,19 @@ dotfiles_provision_platform() {
     *) return 2 ;;
   esac
 }
+
+dotfiles_provision_platform_normalized() (
+  local provision_status
+  set +e
+  (
+    set -e
+    dotfiles_provision_platform "$1"
+  )
+  provision_status=$?
+  if [ "$provision_status" -ne 0 ]; then
+    return 1
+  fi
+)
 
 dotfiles_stow_simulate() (
   cd "$DOTFILES_REPO_ROOT"
@@ -226,8 +250,14 @@ dotfiles_have_unmanaged_migratable_targets() {
 
 dotfiles_make_backup_root() {
   local state_root
+  local state_home
   local timestamp
-  state_root=${XDG_STATE_HOME:-$HOME/.local/state}/dotfiles-backups
+  dotfiles_validate_timestamp_override || return $?
+  case ${XDG_STATE_HOME:-} in
+    /*) state_home=$XDG_STATE_HOME ;;
+    *) state_home=$HOME/.local/state ;;
+  esac
+  state_root=$state_home/dotfiles-backups
   if [ -n "${DOTFILES_TIMESTAMP:-}" ]; then
     timestamp=$DOTFILES_TIMESTAMP
   elif ! timestamp=$("$DOTFILES_DATE_CMD" -u '+%Y%m%dT%H%M%SZ'); then
@@ -304,6 +334,16 @@ dotfiles_backup_managed_targets() {
   done
 }
 
+dotfiles_report_created_backup() {
+  if [ -n "$DOTFILES_BACKUP_ROOT" ]; then
+    printf 'dotfiles: backup created at %s\n' "$DOTFILES_BACKUP_ROOT"
+  fi
+}
+
+dotfiles_report_incomplete_rollback() {
+  bootstrap_error "rollback was incomplete; restore $DOTFILES_BACKUP_ROOT manually"
+}
+
 dotfiles_deploy_default() {
   if ! dotfiles_stow_simulate; then
     dotfiles_report_conflicts
@@ -325,16 +365,17 @@ dotfiles_deploy_migration() {
       if ! dotfiles_stow_simulate; then
         bootstrap_error 'Stow simulation still fails after backing up managed targets'
         dotfiles_rollback_migration ||
-          bootstrap_error 'rollback was incomplete; restore the backup manually'
+          dotfiles_report_incomplete_rollback
         return 1
       fi
     fi
     if ! dotfiles_stow_deploy; then
       bootstrap_error 'Stow deployment failed; removing newly deployed links'
       dotfiles_rollback_migration ||
-        bootstrap_error 'rollback was incomplete; restore the backup manually'
+        dotfiles_report_incomplete_rollback
       return 1
     fi
+    dotfiles_report_created_backup
     return 0
   fi
 
@@ -348,16 +389,16 @@ dotfiles_deploy_migration() {
   if ! dotfiles_stow_simulate; then
     bootstrap_error 'Stow simulation still fails after backing up managed targets'
     dotfiles_rollback_migration ||
-      bootstrap_error 'rollback was incomplete; restore the backup manually'
+      dotfiles_report_incomplete_rollback
     return 1
   fi
   if ! dotfiles_stow_deploy; then
     bootstrap_error 'Stow deployment failed; restoring migrated targets'
     dotfiles_rollback_migration ||
-      bootstrap_error "rollback was incomplete; restore $DOTFILES_BACKUP_ROOT manually"
+      dotfiles_report_incomplete_rollback
     return 1
   fi
-  printf 'dotfiles: backup created at %s\n' "$DOTFILES_BACKUP_ROOT"
+  dotfiles_report_created_backup
 }
 
 bootstrap_main() {
@@ -377,6 +418,10 @@ bootstrap_main() {
       ;;
   esac
 
+  if [ "$mode" = migrate ]; then
+    dotfiles_validate_timestamp_override || return $?
+  fi
+
   platform=$(dotfiles_detect_platform) || return $?
   dotfiles_load_platform "$platform" || return $?
   if [ "$mode" = check ]; then
@@ -386,7 +431,12 @@ bootstrap_main() {
     return 0
   fi
 
-  dotfiles_provision_platform "$platform"
+  if [ "$mode" = deploy ] && dotfiles_have_unmanaged_migratable_targets; then
+    dotfiles_report_conflicts
+    return 1
+  fi
+
+  dotfiles_provision_platform_normalized "$platform"
   case $mode in
     deploy) dotfiles_deploy_default ;;
     migrate) dotfiles_deploy_migration ;;

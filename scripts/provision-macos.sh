@@ -55,6 +55,11 @@ diagnose_macos() {
   elif ! diagnose_brewfile_formulas; then
     diagnostic_status=1
   fi
+  if ! diagnose_tree_sitter_cli \
+    'install the tree-sitter-cli Homebrew formula manually'
+  then
+    diagnostic_status=1
+  fi
   if ! diagnose_common; then
     diagnostic_status=1
   fi

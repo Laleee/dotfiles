@@ -32,9 +32,11 @@ run_with_macos_functions() {
   stow_cmd=$2
   receipt=$3
   shift 3
-  HOME="$home" XDG_STATE_HOME="$home/state" \
+  HOME="$home" XDG_STATE_HOME=${DOTFILES_TEST_XDG_STATE_HOME:-$home/state} \
     DOTFILES_STOW_CMD="$stow_cmd" DOTFILES_TEST_RECEIPT="$receipt" \
-    DOTFILES_TEST_REPO="$REPO_ROOT" DOTFILES_TIMESTAMP=20260830T000000Z \
+    DOTFILES_TEST_REPO="$REPO_ROOT" \
+    DOTFILES_TIMESTAMP=${DOTFILES_TEST_TIMESTAMP:-20260830T000000Z} \
+    DOTFILES_TEST_FORCE_ROLLBACK_FAILURE=${DOTFILES_TEST_FORCE_ROLLBACK_FAILURE:-0} \
     bash -c '
       . "$1/bootstrap.sh"
       shift
@@ -42,6 +44,9 @@ run_with_macos_functions() {
       dotfiles_load_platform() { :; }
       provision_macos() { printf "%s\n" provision >>"$DOTFILES_TEST_RECEIPT"; }
       diagnose_macos() { printf "%s\n" diagnose >>"$DOTFILES_TEST_RECEIPT"; }
+      if [ "$DOTFILES_TEST_FORCE_ROLLBACK_FAILURE" -eq 1 ]; then
+        dotfiles_rollback_migration() { return 1; }
+      fi
       bootstrap_main "$@"
     ' shell "$REPO_ROOT" "$@"
 }
@@ -60,6 +65,27 @@ run_with_failed_macos_provision() {
       dotfiles_load_platform() { :; }
       provision_macos() {
         false
+        printf "%s\n" late-provision-step >>"$DOTFILES_TEST_RECEIPT"
+      }
+      bootstrap_main "$@"
+    ' shell "$REPO_ROOT"
+}
+
+run_with_status_73_macos_provision() {
+  home=$1
+  stow_cmd=$2
+  receipt=$3
+  failing_step=$4
+  HOME="$home" XDG_STATE_HOME="$home/state" \
+    DOTFILES_STOW_CMD="$stow_cmd" DOTFILES_TEST_RECEIPT="$receipt" \
+    DOTFILES_TEST_FAILING_STEP="$failing_step" DOTFILES_TEST_REPO="$REPO_ROOT" \
+    DOTFILES_TIMESTAMP=20260830T000000Z bash -c '
+      . "$1/bootstrap.sh"
+      shift
+      dotfiles_detect_platform() { printf "%s\n" macos; }
+      dotfiles_load_platform() { :; }
+      provision_macos() {
+        "$DOTFILES_TEST_FAILING_STEP"
         printf "%s\n" late-provision-step >>"$DOTFILES_TEST_RECEIPT"
       }
       bootstrap_main "$@"
@@ -102,6 +128,14 @@ case $DOTFILES_TEST_STOW_BEHAVIOR in
   fully-managed-nvim-success)
     exit 0
     ;;
+  resimulation-failure)
+    if [ "$simulation" -eq 1 ]; then
+      simulation_count=$(grep -F -c -- '|--simulate ' "$DOTFILES_TEST_RECEIPT")
+      [ "$simulation_count" -eq 1 ] && exit 0
+      exit 21
+    fi
+    exit 90
+    ;;
   *) exit 64 ;;
 esac
 
@@ -133,7 +167,12 @@ if [ "$DOTFILES_TEST_STOW_BEHAVIOR" = partial-managed-nvim-deploy-failure ]; the
   exit 19
 fi
 link_managed "$DOTFILES_TEST_REPO/zsh/.zprofile" "$HOME/.zprofile"
-link_managed "$DOTFILES_TEST_REPO/nvim/.config/nvim/init.lua" "$HOME/.config/nvim/init.lua"
+source_root="$DOTFILES_TEST_REPO/nvim/.config/nvim"
+find "$source_root" \( -type f -o -type l \) -print | while IFS= read -r source_file; do
+  relative_path=${source_file#"$source_root"/}
+  mkdir -p "$(dirname -- "$HOME/.config/nvim/$relative_path")"
+  link_managed "$source_file" "$HOME/.config/nvim/$relative_path"
+done
 link_managed "$DOTFILES_TEST_REPO/nvim/.config/markdownlint/.markdownlint.yaml" \
   "$HOME/.config/markdownlint/.markdownlint.yaml"
 link_managed "$DOTFILES_TEST_REPO/herdr/.config/herdr/config.toml" \
@@ -240,7 +279,31 @@ test_failed_provisioning_never_deploys_after_a_later_success() {
   [ ! -L "$home/.zshrc" ] || fail 'failed provisioning deployed .zshrc'
 }
 
-test_default_refuses_conflict_after_simulation() {
+test_status_73_provisioning_failure_is_normalized_without_later_steps() {
+  home="$TEST_TMP_ROOT/provision-73-home"
+  stow="$TEST_TMP_ROOT/provision-73-stow"
+  receipt="$TEST_TMP_ROOT/provision-73-receipt"
+  failing_step="$TEST_TMP_ROOT/provision-73-step"
+  mkdir -p "$home"
+  make_stow_double "$stow" success
+  printf '#!/bin/sh\nexit 73\n' >"$failing_step"
+  chmod +x "$failing_step"
+
+  set +e
+  run_with_status_73_macos_provision "$home" "$stow" "$receipt" "$failing_step" \
+    >"$TEST_TMP_ROOT/provision-73-run.out" 2>&1
+  provisioning_status=$?
+  set -e
+
+  assert_equals 1 "$provisioning_status" \
+    'status 73 provisioning failure escaped the public exit contract'
+  if [ -e "$receipt" ]; then
+    fail 'status 73 provisioning continued to a later step or invoked Stow'
+  fi
+  [ ! -L "$home/.zshrc" ] || fail 'status 73 provisioning deployed .zshrc'
+}
+
+test_default_preflight_refuses_unmanaged_target() {
   home="$TEST_TMP_ROOT/conflict-home"
   stow="$TEST_TMP_ROOT/conflict-stow"
   receipt="$TEST_TMP_ROOT/conflict-receipt"
@@ -268,11 +331,35 @@ test_default_refuses_conflict_after_simulation() {
     *'--migrate'*) : ;;
     *) fail 'default conflict did not explain --migrate' ;;
   esac
-  assert_file_contains "$receipt" \
-    "$REPO_ROOT|--simulate --no-folding --target=$home zsh nvim herdr"
-  if grep -F -- "$REPO_ROOT|--no-folding" "$receipt" >/dev/null 2>&1; then
-    fail 'default conflict attempted a real deployment'
-  fi
+  [ ! -e "$receipt" ] ||
+    fail 'default conflict provisioned or invoked Stow before refusal'
+}
+
+test_default_preflight_refuses_merge_compatible_unmanaged_nvim_before_provisioning() {
+  home="$TEST_TMP_ROOT/preflight-nvim-home"
+  stow="$TEST_TMP_ROOT/preflight-nvim-stow"
+  receipt="$TEST_TMP_ROOT/preflight-nvim-receipt"
+  mkdir -p "$home/.config/nvim/lua"
+  printf 'keep user config\n' >"$home/.config/nvim/lua/user.lua"
+  make_stow_double "$stow" success
+
+  set +e
+  preflight_output=$(run_with_macos_functions "$home" "$stow" "$receipt" 2>&1)
+  preflight_status=$?
+  set -e
+
+  assert_equals 1 "$preflight_status" \
+    'default preflight accepted a merge-compatible unmanaged Neovim directory'
+  assert_equals 'keep user config' "$(cat "$home/.config/nvim/lua/user.lua")" \
+    'default preflight changed the unmanaged Neovim file'
+  case $preflight_output in
+    *"$home/.config/nvim"*'--migrate'*) : ;;
+    *) fail 'default preflight omitted the exact Neovim path or migration guidance' ;;
+  esac
+  [ ! -e "$receipt" ] ||
+    fail 'default preflight provisioned or invoked Stow before refusing the target'
+  [ ! -e "$home/.zshrc" ] && [ ! -L "$home/.zshrc" ] ||
+    fail 'default preflight deployed configuration'
 }
 
 test_migration_backs_up_only_managed_targets_and_deploys() {
@@ -309,6 +396,105 @@ test_migration_backs_up_only_managed_targets_and_deploys() {
     "$REPO_ROOT|--no-folding --target=$home zsh nvim herdr"
   simulation_count=$(grep -F -c -- '|--simulate --no-folding' "$receipt")
   assert_equals 2 "$simulation_count" 'migration did not simulate before and after backup'
+}
+
+test_merge_compatible_migration_always_reports_created_backup() {
+  home="$TEST_TMP_ROOT/merge-migrate-home"
+  stow="$TEST_TMP_ROOT/merge-migrate-stow"
+  receipt="$TEST_TMP_ROOT/merge-migrate-receipt"
+  backup="$home/state/dotfiles-backups/20260830T000000Z"
+  mkdir -p "$home/.config/nvim/lua"
+  printf 'keep merge-compatible config\n' >"$home/.config/nvim/lua/user.lua"
+  make_stow_double "$stow" success
+
+  migration_output=$(run_with_macos_functions "$home" "$stow" "$receipt" --migrate)
+
+  assert_equals "dotfiles: backup created at $backup" "$migration_output" \
+    'merge-compatible migration did not report its created backup'
+  assert_equals 'keep merge-compatible config' \
+    "$(cat "$backup/.config/nvim/lua/user.lua")" \
+    'merge-compatible migration did not back up the unmanaged Neovim directory'
+  [ -L "$home/.config/nvim/init.lua" ] ||
+    fail 'merge-compatible migration did not deploy Neovim'
+}
+
+test_incomplete_rollback_reports_exact_backup_path() {
+  home="$TEST_TMP_ROOT/incomplete-rollback-home"
+  stow="$TEST_TMP_ROOT/incomplete-rollback-stow"
+  receipt="$TEST_TMP_ROOT/incomplete-rollback-receipt"
+  backup="$home/state/dotfiles-backups/20260830T000000Z"
+  mkdir -p "$home"
+  printf 'old zshrc\n' >"$home/.zshrc"
+  make_stow_double "$stow" resimulation-failure
+
+  DOTFILES_TEST_FORCE_ROLLBACK_FAILURE=1
+  export DOTFILES_TEST_FORCE_ROLLBACK_FAILURE
+  set +e
+  rollback_output=$(run_with_macos_functions "$home" "$stow" "$receipt" --migrate 2>&1)
+  rollback_status=$?
+  set -e
+  unset DOTFILES_TEST_FORCE_ROLLBACK_FAILURE
+
+  assert_equals 1 "$rollback_status" 'incomplete rollback did not exit 1'
+  case $rollback_output in
+    *"rollback was incomplete; restore $backup manually"*) : ;;
+    *) fail 'incomplete rollback diagnostic omitted the exact backup path' ;;
+  esac
+}
+
+test_migration_rejects_unsafe_timestamp_before_mutation() {
+  home="$TEST_TMP_ROOT/unsafe-timestamp-home"
+  stow="$TEST_TMP_ROOT/unsafe-timestamp-stow"
+  receipt="$TEST_TMP_ROOT/unsafe-timestamp-receipt"
+  escaped="$home/state/escaped-backup"
+  mkdir -p "$home"
+  printf 'old zshrc\n' >"$home/.zshrc"
+  make_stow_double "$stow" migrate-success
+
+  DOTFILES_TEST_TIMESTAMP='../escaped-backup'
+  export DOTFILES_TEST_TIMESTAMP
+  set +e
+  timestamp_output=$(run_with_macos_functions "$home" "$stow" "$receipt" --migrate 2>&1)
+  timestamp_status=$?
+  set -e
+  unset DOTFILES_TEST_TIMESTAMP
+
+  assert_equals 2 "$timestamp_status" 'unsafe migration timestamp did not exit 2'
+  case $timestamp_output in
+    *'DOTFILES_TIMESTAMP must be one safe basename'*) : ;;
+    *) fail 'unsafe migration timestamp diagnostic is missing' ;;
+  esac
+  assert_equals 'old zshrc' "$(cat "$home/.zshrc")" \
+    'unsafe migration timestamp moved the managed target'
+  [ ! -e "$escaped" ] || fail 'unsafe migration timestamp escaped the backup root'
+  [ ! -e "$receipt" ] ||
+    fail 'unsafe migration timestamp provisioned or invoked Stow before rejection'
+}
+
+test_relative_xdg_state_home_falls_back_inside_home() {
+  home="$TEST_TMP_ROOT/relative-state-home"
+  work="$TEST_TMP_ROOT/relative-state-work"
+  stow="$TEST_TMP_ROOT/relative-state-stow"
+  receipt="$TEST_TMP_ROOT/relative-state-receipt"
+  backup="$home/.local/state/dotfiles-backups/20260830T000000Z"
+  mkdir -p "$home" "$work"
+  printf 'old zshrc\n' >"$home/.zshrc"
+  make_stow_double "$stow" migrate-success
+
+  DOTFILES_TEST_XDG_STATE_HOME=relative-state
+  export DOTFILES_TEST_XDG_STATE_HOME
+  migration_output=$(
+    cd "$work"
+    run_with_macos_functions "$home" "$stow" "$receipt" --migrate
+  )
+  unset DOTFILES_TEST_XDG_STATE_HOME
+
+  assert_equals "dotfiles: backup created at $backup" "$migration_output" \
+    'relative XDG_STATE_HOME did not fall back to the home-local state directory'
+  assert_equals 'old zshrc' "$(cat "$backup/.zshrc")" \
+    'state fallback omitted the migrated target'
+  [ ! -e "$work/relative-state" ] ||
+    fail 'relative XDG_STATE_HOME created backup state relative to the working directory'
 }
 
 test_failed_deployment_removes_new_links_and_restores_every_target() {
@@ -422,6 +608,35 @@ test_successful_default_deploys_with_exact_contract() {
   [ -L "$home/.zshrc" ] || fail 'default mode did not deploy configuration'
 }
 
+test_real_stow_smoke_validates_package_layout_and_no_folding() {
+  home="$TEST_TMP_ROOT/real-stow-home"
+  mkdir -p "$home"
+  command -v stow >/dev/null 2>&1 || fail 'real GNU Stow is required for the smoke test'
+
+  (
+    cd "$REPO_ROOT"
+    stow --simulate --no-folding --target="$home" zsh nvim herdr
+    stow --no-folding --target="$home" zsh nvim herdr
+  )
+
+  [ -d "$home/.config" ] && [ ! -L "$home/.config" ] ||
+    fail 'real Stow folded the shared .config directory'
+  [ -d "$home/.config/nvim" ] && [ ! -L "$home/.config/nvim" ] ||
+    fail 'real Stow folded the Neovim package directory'
+  for linked_path in \
+    .zshrc \
+    .zprofile \
+    .config/nvim/init.lua \
+    .config/markdownlint/.markdownlint.yaml \
+    .config/herdr/config.toml
+  do
+    [ -L "$home/$linked_path" ] ||
+      fail "real Stow did not deploy the expected leaf link: $linked_path"
+  done
+  [ "$home/.config/nvim/init.lua" -ef "$REPO_ROOT/nvim/.config/nvim/init.lua" ] ||
+    fail 'real Stow linked Neovim from the wrong package source'
+}
+
 test_platform_detection_classifies_supported_operating_systems_and_architectures() {
   bin="$TEST_TMP_ROOT/platform-bin"
   os_release="$TEST_TMP_ROOT/platform-os-release"
@@ -490,13 +705,20 @@ test_bootstrap_is_idempotent_and_never_writes_herdr_runtime_state_to_repository(
 test_invalid_arguments_and_unsupported_platform_exit_two
 test_check_dispatches_read_only_diagnostics
 test_failed_provisioning_never_deploys_after_a_later_success
-test_default_refuses_conflict_after_simulation
+test_status_73_provisioning_failure_is_normalized_without_later_steps
+test_default_preflight_refuses_unmanaged_target
+test_default_preflight_refuses_merge_compatible_unmanaged_nvim_before_provisioning
 test_migration_backs_up_only_managed_targets_and_deploys
+test_merge_compatible_migration_always_reports_created_backup
+test_incomplete_rollback_reports_exact_backup_path
+test_migration_rejects_unsafe_timestamp_before_mutation
+test_relative_xdg_state_home_falls_back_inside_home
 test_failed_deployment_removes_new_links_and_restores_every_target
 test_failed_deployment_removes_link_inside_existing_nvim_directory
 test_failed_deployment_restores_partially_managed_nvim_directory
 test_migration_does_not_back_up_a_fully_managed_nvim_tree
 test_successful_default_deploys_with_exact_contract
+test_real_stow_smoke_validates_package_layout_and_no_folding
 test_platform_detection_classifies_supported_operating_systems_and_architectures
 test_bootstrap_is_idempotent_and_never_writes_herdr_runtime_state_to_repository
 printf 'ok - bootstrap behavior\n'
