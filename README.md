@@ -21,9 +21,9 @@ missing dependencies, clones only missing shell dependencies, and deploys the
 `zsh`, `nvim`, and `herdr` Stow packages to `$HOME`. It does not silently
 upgrade installed packages or existing clones.
 
-The default run first simulates the Stow deployment. If one of these managed
-paths already exists but is not managed by this repository, it stops without
-changing it:
+After provisioning completes, the default run simulates the Stow deployment
+before it creates links. If one of these managed paths already exists but is
+not managed by this repository, it stops without changing it:
 
 - `~/.zshrc` and `~/.zprofile`
 - `~/.config/nvim`
@@ -64,7 +64,7 @@ deployment fails.
 For a manual rollback, use the backup directory printed by that migration:
 
 ```sh
-backup_dir="$HOME/.local/state/dotfiles-backups/<UTC-timestamp>"
+backup_dir="<exact absolute backup path printed by --migrate>"
 for path in \
   .zshrc \
   .zprofile \
