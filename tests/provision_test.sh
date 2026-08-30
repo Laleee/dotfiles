@@ -468,7 +468,7 @@ EOF
     '. "$1/scripts/provision-macos.sh"; provision_macos_packages' shell "$REPO_ROOT"
 
   assert_equals \
-    'git neovim stow fzf zoxide fd ripgrep tree-sitter node lazygit graphviz shellcheck' \
+    'git neovim stow fzf zoxide fd ripgrep tree-sitter-cli node lazygit graphviz shellcheck' \
     "$(tr '\n' ' ' <"$receipts/formulas" | sed 's/ $//')" \
     'Brewfile formulas differ from the required portable toolset'
 }

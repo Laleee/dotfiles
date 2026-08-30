@@ -129,7 +129,9 @@ chsh -s "$(command -v zsh)"
 
 LazyVim requires Neovim **0.11.2 or newer**. Linux provisioning installs the
 official stable Neovim archive under `~/.local/opt/nvim`; macOS obtains Neovim
-from the Brewfile. A Nerd Font v3 is optional but enables editor icons.
+from the Brewfile. LazyVim parser support also requires the Tree-sitter CLI
+(`tree-sitter-cli` on macOS, included in the Brewfile) and a C compiler. A Nerd
+Font v3 is optional but enables editor icons.
 `lazygit` is optional for the editor integration; it is included in the macOS
 Brewfile and can be installed separately on Linux if desired.
 
