@@ -3,8 +3,8 @@
 set -eu
 set -o pipefail
 
-DOTFILES_MACOS_SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=provision-common.sh
+DOTFILES_MACOS_SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=scripts/provision-common.sh
 . "$DOTFILES_MACOS_SCRIPT_DIR/provision-common.sh"
 
 DOTFILES_BREW_CMD=${DOTFILES_BREW_CMD:-brew}

@@ -3,8 +3,8 @@
 set -eu
 set -o pipefail
 
-DOTFILES_DEBIAN_SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-# shellcheck source=provision-common.sh
+DOTFILES_DEBIAN_SCRIPT_DIR=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=scripts/provision-common.sh
 . "$DOTFILES_DEBIAN_SCRIPT_DIR/provision-common.sh"
 
 DOTFILES_APT_GET_CMD=${DOTFILES_APT_GET_CMD:-apt-get}
@@ -126,7 +126,7 @@ diagnose_debian_packages() {
   local package_status=0
   local package_name
   for package_name in $DOTFILES_APT_PACKAGES; do
-    if ! "$DOTFILES_DPKG_QUERY_CMD" -W -f='${Status}\n' "$package_name" 2>/dev/null |
+    if ! "$DOTFILES_DPKG_QUERY_CMD" -W -f="\${Status}\\n" "$package_name" 2>/dev/null |
       grep -q '^install ok installed$'
     then
       dotfiles_error "missing apt package: $package_name"

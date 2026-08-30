@@ -3,7 +3,7 @@
 set -eu
 set -o pipefail
 
-REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+REPO_ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 TEST_TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/dotfiles-bootstrap-test.XXXXXX")
 trap 'rm -rf "$TEST_TMP_ROOT"' EXIT HUP INT TERM
 

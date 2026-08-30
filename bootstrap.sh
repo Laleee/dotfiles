@@ -3,7 +3,7 @@
 set -eu
 set -o pipefail
 
-DOTFILES_REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+DOTFILES_REPO_ROOT=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 DOTFILES_STOW_CMD=${DOTFILES_STOW_CMD:-stow}
 DOTFILES_UNAME_CMD=${DOTFILES_UNAME_CMD:-uname}
 DOTFILES_DATE_CMD=${DOTFILES_DATE_CMD:-date}
@@ -264,7 +264,7 @@ dotfiles_remove_new_deployment() {
   do
     [ -n "$relative_path" ] || continue
     if dotfiles_target_exists "$HOME/$relative_path"; then
-      if ! rm -rf -- "$HOME/$relative_path"; then
+      if ! rm -rf -- "${HOME:?}/${relative_path:?}"; then
         bootstrap_error "could not remove newly deployed path: $HOME/$relative_path"
         cleanup_status=1
       fi

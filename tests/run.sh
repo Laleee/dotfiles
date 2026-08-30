@@ -3,7 +3,7 @@
 set -eu
 set -o pipefail
 
-REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+REPO_ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 
 bash_files() {
   printf '%s\n' "$REPO_ROOT/bootstrap.sh"
@@ -40,10 +40,13 @@ run_shellcheck() {
   if ! command -v shellcheck >/dev/null 2>&1; then
     printf '%s\n' 'skip - ShellCheck is not installed' >&2
   else
-    while IFS= read -r shell_file; do
-      [ -n "$shell_file" ] || continue
-      shellcheck --shell=bash "$shell_file"
-    done < <(bash_files)
+    (
+      cd "$REPO_ROOT"
+      while IFS= read -r shell_file; do
+        [ -n "$shell_file" ] || continue
+        shellcheck -x --shell=bash "$shell_file"
+      done < <(bash_files)
+    )
   fi
   printf '%s\n' 'note - ShellCheck does not support Zsh; zsh -n validates Zsh configs'
 }

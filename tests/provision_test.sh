@@ -3,7 +3,7 @@
 set -eu
 set -o pipefail
 
-REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+REPO_ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 TEST_TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/dotfiles-provision-test.XXXXXX")
 trap 'rm -rf "$TEST_TMP_ROOT"' EXIT HUP INT TERM
 
@@ -603,7 +603,7 @@ EOF
 
   HOME="$home" PATH="$bin:/usr/bin:/bin" \
     DOTFILES_UNAME_CMD="$bin/uname" DOTFILES_CURL_CMD="$bin/curl" \
-    DOTFILES_APT_GET_CMD="$bin/apt-get" DOTFILES_SUDO_CMD= \
+    DOTFILES_APT_GET_CMD="$bin/apt-get" DOTFILES_SUDO_CMD='' \
     DOTFILES_TEST_RECEIPTS="$receipts" DOTFILES_TEST_NVIM_ARCHIVE="$archive" \
     bash -c '. "$1/scripts/provision-debian.sh"; provision_debian_packages; install_neovim_archive; ensure_fd_link' shell "$REPO_ROOT"
 
