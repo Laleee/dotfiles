@@ -140,6 +140,25 @@ dotfiles_target_exists() {
   [ -e "$1" ] || [ -L "$1" ]
 }
 
+dotfiles_nvim_tree_is_managed() {
+  local destination=$1
+  local source_path=$DOTFILES_REPO_ROOT/nvim/.config/nvim
+  local source_file
+  local relative_path
+
+  if [ -L "$destination" ]; then
+    [ "$destination" -ef "$source_path" ]
+    return $?
+  fi
+  [ -d "$destination" ] || return 1
+
+  while IFS= read -r source_file; do
+    relative_path=${source_file#"$source_path"/}
+    [ -L "$destination/$relative_path" ] &&
+      [ "$destination/$relative_path" -ef "$source_file" ] || return 1
+  done < <(find "$source_path" \( -type f -o -type l \) -print)
+}
+
 dotfiles_target_is_managed() {
   local relative_path=$1
   local destination=$HOME/$relative_path
@@ -149,11 +168,7 @@ dotfiles_target_is_managed() {
     .zprofile) source_path=$DOTFILES_REPO_ROOT/zsh/.zprofile ;;
     .config/nvim)
       source_path=$DOTFILES_REPO_ROOT/nvim/.config/nvim
-      if [ -L "$destination" ] && [ "$destination" -ef "$source_path" ]; then
-        return 0
-      fi
-      [ -d "$destination" ] && [ -L "$destination/init.lua" ] &&
-        [ "$destination/init.lua" -ef "$source_path/init.lua" ]
+      dotfiles_nvim_tree_is_managed "$destination"
       return $?
       ;;
     .config/markdownlint/.markdownlint.yaml)

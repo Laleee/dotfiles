@@ -96,6 +96,12 @@ case $DOTFILES_TEST_STOW_BEHAVIOR in
   partial-nvim-deploy-failure)
     [ "$simulation" -eq 1 ] && exit 0
     ;;
+  partial-managed-nvim-deploy-failure)
+    [ "$simulation" -eq 1 ] && exit 0
+    ;;
+  fully-managed-nvim-success)
+    exit 0
+    ;;
   *) exit 64 ;;
 esac
 
@@ -107,6 +113,11 @@ if [ "$DOTFILES_TEST_STOW_BEHAVIOR" = deploy-failure ]; then
 fi
 if [ "$DOTFILES_TEST_STOW_BEHAVIOR" = partial-nvim-deploy-failure ]; then
   ln -s "$DOTFILES_TEST_REPO/nvim/.config/nvim/init.lua" "$HOME/.config/nvim/init.lua"
+  exit 19
+fi
+if [ "$DOTFILES_TEST_STOW_BEHAVIOR" = partial-managed-nvim-deploy-failure ]; then
+  ln -s "$DOTFILES_TEST_REPO/nvim/.config/nvim/.neoconf.json" \
+    "$HOME/.config/nvim/.neoconf.json"
   exit 19
 fi
 ln -s "$DOTFILES_TEST_REPO/zsh/.zprofile" "$HOME/.zprofile"
@@ -333,6 +344,56 @@ test_failed_deployment_removes_link_inside_existing_nvim_directory() {
     'rollback changed unrelated Herdr state'
 }
 
+test_failed_deployment_restores_partially_managed_nvim_directory() {
+  home="$TEST_TMP_ROOT/partial-managed-nvim-home"
+  stow="$TEST_TMP_ROOT/partial-managed-nvim-stow"
+  receipt="$TEST_TMP_ROOT/partial-managed-nvim-receipt"
+  mkdir -p "$home/.config/nvim" "$home/.config/herdr"
+  ln -s "$REPO_ROOT/nvim/.config/nvim/init.lua" "$home/.config/nvim/init.lua"
+  printf 'keep history\n' >"$home/.config/herdr/history.db"
+  make_stow_double "$stow" partial-managed-nvim-deploy-failure
+
+  set +e
+  run_with_macos_functions "$home" "$stow" "$receipt" --migrate \
+    >"$TEST_TMP_ROOT/partial-managed-nvim-run.out" 2>&1
+  deployment_status=$?
+  set -e
+
+  assert_equals 1 "$deployment_status" 'partial managed Neovim deployment did not exit 1'
+  [ -L "$home/.config/nvim/init.lua" ] ||
+    fail 'rollback removed the original managed Neovim link'
+  [ "$home/.config/nvim/init.lua" -ef "$REPO_ROOT/nvim/.config/nvim/init.lua" ] ||
+    fail 'rollback changed the original managed Neovim link'
+  [ ! -e "$home/.config/nvim/.neoconf.json" ] &&
+    [ ! -L "$home/.config/nvim/.neoconf.json" ] ||
+    fail 'rollback left the added partially managed Neovim link'
+  assert_equals 'keep history' "$(cat "$home/.config/herdr/history.db")" \
+    'rollback changed unrelated Herdr state'
+}
+
+test_migration_does_not_back_up_a_fully_managed_nvim_tree() {
+  home="$TEST_TMP_ROOT/fully-managed-nvim-home"
+  stow="$TEST_TMP_ROOT/fully-managed-nvim-stow"
+  receipt="$TEST_TMP_ROOT/fully-managed-nvim-receipt"
+  source_path="$REPO_ROOT/nvim/.config/nvim"
+  mkdir -p "$home/.config/nvim"
+  while IFS= read -r source_file; do
+    relative_path=${source_file#"$source_path"/}
+    mkdir -p "$(dirname "$home/.config/nvim/$relative_path")"
+    ln -s "$source_file" "$home/.config/nvim/$relative_path"
+  done < <(find "$source_path" \( -type f -o -type l \) -print)
+  make_stow_double "$stow" fully-managed-nvim-success
+
+  run_with_macos_functions "$home" "$stow" "$receipt" --migrate
+
+  [ ! -e "$home/state/dotfiles-backups/20260830T000000Z" ] ||
+    fail 'migration backed up a fully managed Neovim tree'
+  simulation_count=$(grep -F -c -- '|--simulate --no-folding' "$receipt")
+  assert_equals 1 "$simulation_count" 'migration re-simulated a fully managed Neovim tree'
+  assert_file_contains "$receipt" \
+    "$REPO_ROOT|--no-folding --target=$home zsh nvim herdr"
+}
+
 test_successful_default_deploys_with_exact_contract() {
   home="$TEST_TMP_ROOT/success-home"
   stow="$TEST_TMP_ROOT/success-stow"
@@ -356,5 +417,7 @@ test_default_refuses_conflict_after_simulation
 test_migration_backs_up_only_managed_targets_and_deploys
 test_failed_deployment_removes_new_links_and_restores_every_target
 test_failed_deployment_removes_link_inside_existing_nvim_directory
+test_failed_deployment_restores_partially_managed_nvim_directory
+test_migration_does_not_back_up_a_fully_managed_nvim_tree
 test_successful_default_deploys_with_exact_contract
 printf 'ok - bootstrap behavior\n'
