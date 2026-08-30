@@ -1,0 +1,32 @@
+name: Test dotfiles
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install test dependencies on Ubuntu
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck stow zsh
+
+      - name: Install test dependencies on macOS
+        if: runner.os == 'macOS'
+        run: brew install shellcheck stow
+
+      # The test suite redirects HOME to per-test temporary directories and
+      # replaces curl and git remote installers with local test doubles.
+      - name: Run isolated tests
+        run: bash tests/run.sh

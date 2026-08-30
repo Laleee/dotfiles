@@ -314,6 +314,43 @@ test_zsh_uses_atomic_completion_directory() {
   [ "$status" -eq 0 ] || fail 'Zsh fpath does not use the atomic completion directory'
 }
 
+test_zsh_discovers_generated_completions_through_the_atomic_pointer() {
+  home="$TEST_TMP_ROOT/zsh-completion-discovery-home"
+  completion_root="$home/.local/share/zsh/site-functions"
+  release="$completion_root/.dotfiles-completions-release.test"
+  pointer="$completion_root/.dotfiles-completions-current"
+  mkdir -p "$release"
+  cat >"$release/_herdr" <<'EOF'
+#compdef herdr
+_herdr() { _arguments '*:argument:' }
+EOF
+  cat >"$release/_uv" <<'EOF'
+#compdef uv
+_uv() { _arguments '*:argument:' }
+EOF
+  cat >"$release/_uvx" <<'EOF'
+#compdef uvx
+_uvx() { _arguments '*:argument:' }
+EOF
+  ln -s "${release##*/}" "$pointer"
+
+  set +e
+  HOME="$home" XDG_DATA_HOME="$home/.local/share" ZSH="$home/missing-oh-my-zsh" \
+    ZSH_CUSTOM="$home/missing-oh-my-zsh/custom" zsh -dfc '
+      source "$1"
+      autoload -Uz compinit
+      compinit -D
+      for completion_name in _herdr _uv _uvx; do
+        autoload +X "$completion_name" || exit 1
+        [[ -n ${functions[$completion_name]} ]] || exit 1
+      done
+    ' zsh "$REPO_ROOT/zsh/.zshrc"
+  status=$?
+  set -e
+  [ "$status" -eq 0 ] ||
+    fail 'Zsh could not discover generated completions through the atomic pointer'
+}
+
 test_incomplete_uv_installation_is_not_replaced() {
   home="$TEST_TMP_ROOT/incomplete-uv-home"
   bin="$TEST_TMP_ROOT/incomplete-uv-bin"
@@ -589,6 +626,7 @@ test_completion_failure_preserves_existing_set
 test_completion_publication_failure_preserves_existing_set
 test_first_completion_publication_has_one_atomic_entry
 test_zsh_uses_atomic_completion_directory
+test_zsh_discovers_generated_completions_through_the_atomic_pointer
 test_incomplete_uv_installation_is_not_replaced
 test_failed_remote_installer_cleans_temp_directory
 test_failed_neovim_download_cleans_temp_directory

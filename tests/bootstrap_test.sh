@@ -105,26 +105,38 @@ case $DOTFILES_TEST_STOW_BEHAVIOR in
   *) exit 64 ;;
 esac
 
+link_managed() {
+  source_path=$1
+  destination_path=$2
+  if [ -L "$destination_path" ] && [ "$destination_path" -ef "$source_path" ]; then
+    return 0
+  fi
+  if [ -e "$destination_path" ] || [ -L "$destination_path" ]; then
+    exit 93
+  fi
+  ln -s "$source_path" "$destination_path"
+}
+
 mkdir -p "$HOME/.config/nvim" "$HOME/.config/markdownlint" "$HOME/.config/herdr"
-ln -s "$DOTFILES_TEST_REPO/zsh/.zshrc" "$HOME/.zshrc"
+link_managed "$DOTFILES_TEST_REPO/zsh/.zshrc" "$HOME/.zshrc"
 if [ "$DOTFILES_TEST_STOW_BEHAVIOR" = deploy-failure ]; then
-  ln -s "$DOTFILES_TEST_REPO/nvim/.config/nvim/init.lua" "$HOME/.config/nvim/init.lua"
+  link_managed "$DOTFILES_TEST_REPO/nvim/.config/nvim/init.lua" "$HOME/.config/nvim/init.lua"
   exit 19
 fi
 if [ "$DOTFILES_TEST_STOW_BEHAVIOR" = partial-nvim-deploy-failure ]; then
-  ln -s "$DOTFILES_TEST_REPO/nvim/.config/nvim/init.lua" "$HOME/.config/nvim/init.lua"
+  link_managed "$DOTFILES_TEST_REPO/nvim/.config/nvim/init.lua" "$HOME/.config/nvim/init.lua"
   exit 19
 fi
 if [ "$DOTFILES_TEST_STOW_BEHAVIOR" = partial-managed-nvim-deploy-failure ]; then
-  ln -s "$DOTFILES_TEST_REPO/nvim/.config/nvim/.neoconf.json" \
+  link_managed "$DOTFILES_TEST_REPO/nvim/.config/nvim/.neoconf.json" \
     "$HOME/.config/nvim/.neoconf.json"
   exit 19
 fi
-ln -s "$DOTFILES_TEST_REPO/zsh/.zprofile" "$HOME/.zprofile"
-ln -s "$DOTFILES_TEST_REPO/nvim/.config/nvim/init.lua" "$HOME/.config/nvim/init.lua"
-ln -s "$DOTFILES_TEST_REPO/nvim/.config/markdownlint/.markdownlint.yaml" \
+link_managed "$DOTFILES_TEST_REPO/zsh/.zprofile" "$HOME/.zprofile"
+link_managed "$DOTFILES_TEST_REPO/nvim/.config/nvim/init.lua" "$HOME/.config/nvim/init.lua"
+link_managed "$DOTFILES_TEST_REPO/nvim/.config/markdownlint/.markdownlint.yaml" \
   "$HOME/.config/markdownlint/.markdownlint.yaml"
-ln -s "$DOTFILES_TEST_REPO/herdr/.config/herdr/config.toml" \
+link_managed "$DOTFILES_TEST_REPO/herdr/.config/herdr/config.toml" \
   "$HOME/.config/herdr/config.toml"
 EOF
   chmod +x "$destination"
@@ -410,6 +422,71 @@ test_successful_default_deploys_with_exact_contract() {
   [ -L "$home/.zshrc" ] || fail 'default mode did not deploy configuration'
 }
 
+test_platform_detection_classifies_supported_operating_systems_and_architectures() {
+  bin="$TEST_TMP_ROOT/platform-bin"
+  os_release="$TEST_TMP_ROOT/platform-os-release"
+  mkdir -p "$bin"
+  cat >"$bin/uname" <<'EOF'
+#!/bin/sh
+set -eu
+case $1 in
+  -s) printf '%s\n' "$DOTFILES_TEST_OS" ;;
+  -m) printf '%s\n' "$DOTFILES_TEST_ARCH" ;;
+  *) exit 64 ;;
+esac
+EOF
+  chmod +x "$bin/uname"
+  printf 'ID=ubuntu\nID_LIKE=debian\n' >"$os_release"
+
+  macos=$(DOTFILES_UNAME_CMD="$bin/uname" DOTFILES_OS_RELEASE_FILE="$os_release" \
+    DOTFILES_TEST_OS=Darwin DOTFILES_TEST_ARCH=arm64 bash -c \
+    '. "$1/bootstrap.sh"; dotfiles_detect_platform' shell "$REPO_ROOT")
+  debian=$(DOTFILES_UNAME_CMD="$bin/uname" DOTFILES_OS_RELEASE_FILE="$os_release" \
+    DOTFILES_TEST_OS=Linux DOTFILES_TEST_ARCH=x86_64 bash -c \
+    '. "$1/bootstrap.sh"; dotfiles_detect_platform' shell "$REPO_ROOT")
+
+  set +e
+  unsupported_output=$(DOTFILES_UNAME_CMD="$bin/uname" DOTFILES_OS_RELEASE_FILE="$os_release" \
+    DOTFILES_TEST_OS=Linux DOTFILES_TEST_ARCH=riscv64 bash -c \
+    '. "$1/bootstrap.sh"; dotfiles_detect_platform' shell "$REPO_ROOT" 2>&1)
+  unsupported_status=$?
+  set -e
+
+  assert_equals macos "$macos" 'Darwin arm64 was not classified as macOS'
+  assert_equals debian "$debian" 'Ubuntu x86_64 was not classified as Debian-family Linux'
+  assert_equals 2 "$unsupported_status" 'unsupported architecture did not exit 2'
+  case $unsupported_output in
+    *'unsupported architecture: riscv64'*) : ;;
+    *) fail 'unsupported architecture diagnostic is missing' ;;
+  esac
+}
+
+test_bootstrap_is_idempotent_and_never_writes_herdr_runtime_state_to_repository() {
+  home="$TEST_TMP_ROOT/idempotent-home"
+  stow="$TEST_TMP_ROOT/idempotent-stow"
+  receipt="$TEST_TMP_ROOT/idempotent-receipt"
+  repository_state_before=$(git -C "$REPO_ROOT" status --porcelain --untracked-files=all --ignored)
+  mkdir -p "$home/.config/herdr"
+  printf 'keep history\n' >"$home/.config/herdr/history.db"
+  make_stow_double "$stow" success
+
+  run_with_macos_functions "$home" "$stow" "$receipt"
+  run_with_macos_functions "$home" "$stow" "$receipt"
+
+  assert_equals 2 "$(grep -F -c -- provision "$receipt")" \
+    'two bootstrap runs did not provision twice'
+  assert_equals 2 "$(grep -F -c -- '|--no-folding' "$receipt")" \
+    'two bootstrap runs did not deploy twice'
+  [ -L "$home/.zshrc" ] || fail 'second bootstrap run removed .zshrc'
+  assert_equals 'keep history' "$(cat "$home/.config/herdr/history.db")" \
+    'bootstrap changed Herdr runtime history'
+  [ ! -e "$REPO_ROOT/herdr/.config/herdr/history.db" ] ||
+    fail 'Herdr runtime history was written inside the repository'
+  assert_equals "$repository_state_before" \
+    "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=all --ignored)" \
+    'bootstrap changed the repository while preserving Herdr runtime state'
+}
+
 test_invalid_arguments_and_unsupported_platform_exit_two
 test_check_dispatches_read_only_diagnostics
 test_failed_provisioning_never_deploys_after_a_later_success
@@ -420,4 +497,6 @@ test_failed_deployment_removes_link_inside_existing_nvim_directory
 test_failed_deployment_restores_partially_managed_nvim_directory
 test_migration_does_not_back_up_a_fully_managed_nvim_tree
 test_successful_default_deploys_with_exact_contract
+test_platform_detection_classifies_supported_operating_systems_and_architectures
+test_bootstrap_is_idempotent_and_never_writes_herdr_runtime_state_to_repository
 printf 'ok - bootstrap behavior\n'
