@@ -149,7 +149,10 @@ publish_completion_release() (
 
   case $completion_old_pointer in
     .dotfiles-completions-release.*)
-      rm -rf -- "${completion_dir:?}/${completion_old_pointer:?}"
+      case $completion_old_pointer in
+        */*) ;;
+        *) rm -rf -- "${completion_dir:?}/${completion_old_pointer:?}" ;;
+      esac
       ;;
   esac
 )

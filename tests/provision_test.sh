@@ -240,6 +240,44 @@ EOF
   assert_equals 'new uv' "$(cat "$completion_dir/_uv")" 'UV completion was not published'
   assert_equals 'new uvx' "$(cat "$completion_dir/_uvx")" 'UVX completion was not published'
   [ -L "$completion_dir" ] || fail 'atomic completion directory pointer is missing'
+  release_count=$(find "$completion_root" -maxdepth 1 -type d \
+    -name '.dotfiles-completions-release.*' | wc -l | tr -d ' ')
+  assert_equals 1 "$release_count" \
+    'successful completion publication did not remove the prior generated release'
+}
+
+test_completion_cleanup_rejects_traversal_pointer_targets() {
+  home="$TEST_TMP_ROOT/completion-containment-home"
+  bin="$TEST_TMP_ROOT/completion-containment-bin"
+  completion_root="$home/.local/share/zsh/site-functions"
+  completion_pointer="$completion_root/.dotfiles-completions-current"
+  traversal_release="$completion_root/.dotfiles-completions-release.traversal"
+  victim="$home/.local/share/zsh/victim"
+  mkdir -p "$bin" "$traversal_release" "${victim%/*}"
+  printf 'must survive\n' >"$victim"
+  ln -s '.dotfiles-completions-release.traversal/../../victim' "$completion_pointer"
+
+  cat >"$bin/herdr" <<'EOF'
+#!/bin/sh
+printf 'new herdr\n'
+EOF
+  cat >"$bin/uv" <<'EOF'
+#!/bin/sh
+printf 'new uv\n'
+EOF
+  cat >"$bin/uvx" <<'EOF'
+#!/bin/sh
+printf 'new uvx\n'
+EOF
+  chmod +x "$bin/herdr" "$bin/uv" "$bin/uvx"
+
+  HOME="$home" PATH="$bin:/usr/bin:/bin" bash -c \
+    '. "$1/scripts/provision-common.sh"; regenerate_completions' shell "$REPO_ROOT"
+
+  assert_equals 'must survive' "$(cat "$victim")" \
+    'completion cleanup removed a victim outside the generated release directory'
+  assert_equals 'new herdr' "$(cat "$completion_pointer/_herdr")" \
+    'completion publication did not replace the traversal pointer'
 }
 
 test_first_completion_publication_has_one_atomic_entry() {
@@ -685,6 +723,7 @@ EOF
 test_common_provisioning_is_idempotent_and_regenerates_completions
 test_completion_failure_preserves_existing_set
 test_completion_publication_failure_preserves_existing_set
+test_completion_cleanup_rejects_traversal_pointer_targets
 test_first_completion_publication_has_one_atomic_entry
 test_zsh_uses_atomic_completion_directory
 test_zsh_discovers_generated_completions_through_the_atomic_pointer
