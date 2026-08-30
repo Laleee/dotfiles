@@ -197,10 +197,12 @@ dotfiles_record_target_state() {
   done
 }
 
-dotfiles_have_migratable_targets() {
+dotfiles_have_unmanaged_migratable_targets() {
   local relative_path
   for relative_path in "${DOTFILES_MANAGED_TARGETS[@]}"; do
-    if dotfiles_target_exists "$HOME/$relative_path"; then
+    if dotfiles_target_exists "$HOME/$relative_path" &&
+      ! dotfiles_target_is_managed "$relative_path"
+    then
       return 0
     fi
   done
@@ -272,7 +274,9 @@ dotfiles_backup_managed_targets() {
   local destination
   dotfiles_make_backup_root || return 1
   for relative_path in "${DOTFILES_MANAGED_TARGETS[@]}"; do
-    if dotfiles_target_exists "$HOME/$relative_path"; then
+    if dotfiles_target_exists "$HOME/$relative_path" &&
+      ! dotfiles_target_is_managed "$relative_path"
+    then
       destination=$DOTFILES_BACKUP_ROOT/$relative_path
       mkdir -p "$(dirname -- "$destination")"
       if ! mv "$HOME/$relative_path" "$destination"; then
@@ -299,6 +303,17 @@ dotfiles_deploy_default() {
 dotfiles_deploy_migration() {
   dotfiles_record_target_state
   if dotfiles_stow_simulate; then
+    if dotfiles_have_unmanaged_migratable_targets; then
+      if ! dotfiles_backup_managed_targets; then
+        return 1
+      fi
+      if ! dotfiles_stow_simulate; then
+        bootstrap_error 'Stow simulation still fails after backing up managed targets'
+        dotfiles_rollback_migration ||
+          bootstrap_error 'rollback was incomplete; restore the backup manually'
+        return 1
+      fi
+    fi
     if ! dotfiles_stow_deploy; then
       bootstrap_error 'Stow deployment failed; removing newly deployed links'
       dotfiles_rollback_migration ||
@@ -308,7 +323,7 @@ dotfiles_deploy_migration() {
     return 0
   fi
 
-  if ! dotfiles_have_migratable_targets; then
+  if ! dotfiles_have_unmanaged_migratable_targets; then
     bootstrap_error 'Stow simulation failed and no managed target can be migrated'
     return 1
   fi
@@ -356,10 +371,7 @@ bootstrap_main() {
     return 0
   fi
 
-  if ! dotfiles_provision_platform "$platform"; then
-    bootstrap_error 'provisioning failed'
-    return 1
-  fi
+  dotfiles_provision_platform "$platform"
   case $mode in
     deploy) dotfiles_deploy_default ;;
     migrate) dotfiles_deploy_migration ;;

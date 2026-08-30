@@ -46,6 +46,26 @@ run_with_macos_functions() {
     ' shell "$REPO_ROOT" "$@"
 }
 
+run_with_failed_macos_provision() {
+  home=$1
+  stow_cmd=$2
+  receipt=$3
+  HOME="$home" XDG_STATE_HOME="$home/state" \
+    DOTFILES_STOW_CMD="$stow_cmd" DOTFILES_TEST_RECEIPT="$receipt" \
+    DOTFILES_TEST_REPO="$REPO_ROOT" DOTFILES_TIMESTAMP=20260830T000000Z \
+    bash -c '
+      . "$1/bootstrap.sh"
+      shift
+      dotfiles_detect_platform() { printf "%s\n" macos; }
+      dotfiles_load_platform() { :; }
+      provision_macos() {
+        false
+        printf "%s\n" late-provision-step >>"$DOTFILES_TEST_RECEIPT"
+      }
+      bootstrap_main "$@"
+    ' shell "$REPO_ROOT"
+}
+
 make_stow_double() {
   destination=$1
   behavior=$2
@@ -73,12 +93,19 @@ case $DOTFILES_TEST_STOW_BEHAVIOR in
   success)
     [ "$simulation" -eq 1 ] && exit 0
     ;;
+  partial-nvim-deploy-failure)
+    [ "$simulation" -eq 1 ] && exit 0
+    ;;
   *) exit 64 ;;
 esac
 
 mkdir -p "$HOME/.config/nvim" "$HOME/.config/markdownlint" "$HOME/.config/herdr"
 ln -s "$DOTFILES_TEST_REPO/zsh/.zshrc" "$HOME/.zshrc"
 if [ "$DOTFILES_TEST_STOW_BEHAVIOR" = deploy-failure ]; then
+  ln -s "$DOTFILES_TEST_REPO/nvim/.config/nvim/init.lua" "$HOME/.config/nvim/init.lua"
+  exit 19
+fi
+if [ "$DOTFILES_TEST_STOW_BEHAVIOR" = partial-nvim-deploy-failure ]; then
   ln -s "$DOTFILES_TEST_REPO/nvim/.config/nvim/init.lua" "$HOME/.config/nvim/init.lua"
   exit 19
 fi
@@ -165,6 +192,29 @@ test_check_dispatches_read_only_diagnostics() {
 
   assert_equals diagnose "$(cat "$receipt")" '--check did not dispatch diagnostics only'
   [ -z "$(find "$home" -mindepth 1 -print -quit)" ] || fail '--check mutated HOME'
+}
+
+test_failed_provisioning_never_deploys_after_a_later_success() {
+  home="$TEST_TMP_ROOT/provision-failure-home"
+  stow="$TEST_TMP_ROOT/provision-failure-stow"
+  receipt="$TEST_TMP_ROOT/provision-failure-receipt"
+  mkdir -p "$home"
+  make_stow_double "$stow" success
+
+  set +e
+  run_with_failed_macos_provision "$home" "$stow" "$receipt" \
+    >"$TEST_TMP_ROOT/provision-failure-run.out" 2>&1
+  provisioning_status=$?
+  set -e
+
+  assert_equals 1 "$provisioning_status" 'failed provisioning did not exit 1'
+  if [ -e "$receipt" ] && grep -F -- 'late-provision-step' "$receipt" >/dev/null 2>&1; then
+    fail 'provisioning continued after an early failure'
+  fi
+  if [ -e "$receipt" ] && grep -F -- '|--no-folding' "$receipt" >/dev/null 2>&1; then
+    fail 'failed provisioning attempted deployment'
+  fi
+  [ ! -L "$home/.zshrc" ] || fail 'failed provisioning deployed .zshrc'
 }
 
 test_default_refuses_conflict_after_simulation() {
@@ -259,6 +309,30 @@ test_failed_deployment_removes_new_links_and_restores_every_target() {
   [ ! -e "$backup/.config/nvim" ] || fail 'rollback left restored Neovim in backup'
 }
 
+test_failed_deployment_removes_link_inside_existing_nvim_directory() {
+  home="$TEST_TMP_ROOT/partial-nvim-home"
+  stow="$TEST_TMP_ROOT/partial-nvim-stow"
+  receipt="$TEST_TMP_ROOT/partial-nvim-receipt"
+  mkdir -p "$home/.config/nvim/lua" "$home/.config/herdr"
+  printf 'keep nvim state\n' >"$home/.config/nvim/lua/user.lua"
+  printf 'keep history\n' >"$home/.config/herdr/history.db"
+  make_stow_double "$stow" partial-nvim-deploy-failure
+
+  set +e
+  run_with_macos_functions "$home" "$stow" "$receipt" --migrate \
+    >"$TEST_TMP_ROOT/partial-nvim-run.out" 2>&1
+  deployment_status=$?
+  set -e
+
+  assert_equals 1 "$deployment_status" 'partial Neovim deployment did not exit 1'
+  assert_equals 'keep nvim state' "$(cat "$home/.config/nvim/lua/user.lua")" \
+    'rollback changed pre-existing Neovim state'
+  [ ! -e "$home/.config/nvim/init.lua" ] && [ ! -L "$home/.config/nvim/init.lua" ] ||
+    fail 'rollback left a partial Neovim link'
+  assert_equals 'keep history' "$(cat "$home/.config/herdr/history.db")" \
+    'rollback changed unrelated Herdr state'
+}
+
 test_successful_default_deploys_with_exact_contract() {
   home="$TEST_TMP_ROOT/success-home"
   stow="$TEST_TMP_ROOT/success-stow"
@@ -277,8 +351,10 @@ test_successful_default_deploys_with_exact_contract() {
 
 test_invalid_arguments_and_unsupported_platform_exit_two
 test_check_dispatches_read_only_diagnostics
+test_failed_provisioning_never_deploys_after_a_later_success
 test_default_refuses_conflict_after_simulation
 test_migration_backs_up_only_managed_targets_and_deploys
 test_failed_deployment_removes_new_links_and_restores_every_target
+test_failed_deployment_removes_link_inside_existing_nvim_directory
 test_successful_default_deploys_with_exact_contract
 printf 'ok - bootstrap behavior\n'
