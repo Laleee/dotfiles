@@ -68,7 +68,7 @@ diagnose_neovim_version() {
     dotfiles_error 'missing command: nvim; install Neovim 0.11.2 or newer manually'
     return 1
   fi
-  if ! nvim_output=$("$nvim_cmd" --version 2>/dev/null); then
+  if ! nvim_output=$(NVIM_LOG_FILE=/dev/null "$nvim_cmd" --version 2>/dev/null); then
     dotfiles_error "Neovim command is unusable: $nvim_cmd"
     return 1
   fi

@@ -505,6 +505,29 @@ EOF
     '. "$1/scripts/provision-common.sh"; diagnose_common' shell "$REPO_ROOT"
 }
 
+test_neovim_diagnostics_suppress_current_directory_log() {
+  home="$TEST_TMP_ROOT/nvim-log-home"
+  bin="$TEST_TMP_ROOT/nvim-log-bin"
+  working_dir="$TEST_TMP_ROOT/nvim-log-working"
+  mkdir -p "$home" "$bin" "$working_dir"
+  cat >"$bin/nvim" <<'EOF'
+#!/bin/sh
+if [ "${NVIM_LOG_FILE:-}" != /dev/null ]; then
+  : >nvim.log
+fi
+printf 'NVIM v0.11.2\n'
+EOF
+  chmod +x "$bin/nvim"
+
+  (cd "$working_dir" && HOME="$home" PATH="$bin:/usr/bin:/bin" bash -c '
+    . "$1/scripts/provision-common.sh"
+    diagnose_neovim_version
+  ' shell "$REPO_ROOT")
+
+  [ ! -e "$working_dir/nvim.log" ] ||
+    fail 'Neovim diagnostics created runtime state in the current directory'
+}
+
 test_failed_remote_installer_cleans_temp_directory() {
   home="$TEST_TMP_ROOT/failed-installer-home"
   bin="$TEST_TMP_ROOT/failed-installer-bin"
@@ -1036,6 +1059,7 @@ test_zsh_falls_back_from_relative_xdg_data_home
 test_zsh_discovers_generated_completions_through_the_atomic_pointer
 test_incomplete_uv_installation_is_not_replaced
 test_common_diagnostics_reject_outdated_neovim_with_manual_guidance
+test_neovim_diagnostics_suppress_current_directory_log
 test_failed_remote_installer_cleans_temp_directory
 test_failed_neovim_download_cleans_temp_directory
 test_macos_packages_require_brew_and_never_upgrade
