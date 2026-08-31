@@ -673,7 +673,11 @@ set -eu
 [ "$1 $2" = "list --versions" ]
 printf '%s 1.0\n' "$3"
 EOF
-  chmod +x "$bin/brew"
+  cat >"$bin/tree-sitter" <<'EOF'
+#!/bin/sh
+exit 42
+EOF
+  chmod +x "$bin/brew" "$bin/tree-sitter"
 
   set +e
   diagnostic=$(HOME="$home" PATH="$bin:/usr/bin:/bin" \
@@ -687,7 +691,7 @@ EOF
 
   assert_equals 1 "$status" 'macOS diagnostics accepted unusable Tree-sitter CLI'
   assert_equals \
-    'dotfiles: missing command: tree-sitter; install the tree-sitter-cli Homebrew formula manually' \
+    "dotfiles: Tree-sitter CLI is unusable: $bin/tree-sitter; install the tree-sitter-cli Homebrew formula manually" \
     "$diagnostic" 'macOS Tree-sitter diagnostic guidance is not precise'
 }
 

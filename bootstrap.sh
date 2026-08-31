@@ -279,7 +279,8 @@ dotfiles_restore_moved_targets() {
     [ -n "$relative_path" ] || continue
     mkdir -p "$(dirname -- "$HOME/$relative_path")"
     if ! mv "$DOTFILES_BACKUP_ROOT/$relative_path" "$HOME/$relative_path"; then
-      bootstrap_error "could not restore $HOME/$relative_path"
+      bootstrap_error \
+        "could not restore $HOME/$relative_path from $DOTFILES_BACKUP_ROOT/$relative_path; backup remains at $DOTFILES_BACKUP_ROOT"
       restore_status=1
     fi
   done

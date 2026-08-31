@@ -442,6 +442,37 @@ test_incomplete_rollback_reports_exact_backup_path() {
   esac
 }
 
+test_backup_stage_restore_failure_reports_exact_backup_path() {
+  home="$TEST_TMP_ROOT/backup-stage-rollback-home"
+  backup="$home/state/dotfiles-backups/20260830T000000Z"
+  mkdir -p "$home"
+  printf 'old zshrc\n' >"$home/.zshrc"
+  printf 'old zprofile\n' >"$home/.zprofile"
+
+  set +e
+  backup_output=$(HOME="$home" XDG_STATE_HOME="$home/state" \
+    DOTFILES_TIMESTAMP=20260830T000000Z bash -c '
+      . "$1/bootstrap.sh"
+      mv() {
+        if [ "$1" = "$HOME/.zprofile" ] ||
+          [ "$1" = "$DOTFILES_BACKUP_ROOT/.zshrc" ]
+        then
+          return 73
+        fi
+        command mv "$@"
+      }
+      dotfiles_backup_managed_targets
+    ' shell "$REPO_ROOT" 2>&1)
+  backup_status=$?
+  set -e
+
+  assert_equals 1 "$backup_status" 'backup-stage rollback failure did not exit 1'
+  case $backup_output in
+    *"could not restore $home/.zshrc from $backup/.zshrc; backup remains at $backup"*) : ;;
+    *) fail 'backup-stage rollback diagnostic omitted the restore source and exact backup path' ;;
+  esac
+}
+
 test_migration_rejects_unsafe_timestamp_before_mutation() {
   home="$TEST_TMP_ROOT/unsafe-timestamp-home"
   stow="$TEST_TMP_ROOT/unsafe-timestamp-stow"
@@ -711,6 +742,7 @@ test_default_preflight_refuses_merge_compatible_unmanaged_nvim_before_provisioni
 test_migration_backs_up_only_managed_targets_and_deploys
 test_merge_compatible_migration_always_reports_created_backup
 test_incomplete_rollback_reports_exact_backup_path
+test_backup_stage_restore_failure_reports_exact_backup_path
 test_migration_rejects_unsafe_timestamp_before_mutation
 test_relative_xdg_state_home_falls_back_inside_home
 test_failed_deployment_removes_new_links_and_restores_every_target

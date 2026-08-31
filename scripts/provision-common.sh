@@ -90,8 +90,13 @@ diagnose_neovim_version() {
 
 diagnose_tree_sitter_cli() {
   local guidance=$1
-  if ! dotfiles_tool_path tree-sitter >/dev/null 2>&1; then
+  local tree_sitter_cmd
+  if ! tree_sitter_cmd=$(dotfiles_tool_path tree-sitter 2>/dev/null); then
     dotfiles_error "missing command: tree-sitter; $guidance"
+    return 1
+  fi
+  if ! "$tree_sitter_cmd" --version >/dev/null 2>&1; then
+    dotfiles_error "Tree-sitter CLI is unusable: $tree_sitter_cmd; $guidance"
     return 1
   fi
 }
