@@ -473,6 +473,36 @@ test_backup_stage_restore_failure_reports_exact_backup_path() {
   esac
 }
 
+test_rollback_retains_directory_backup_when_cleanup_leaves_destination() {
+  home="$TEST_TMP_ROOT/cleanup-failure-home"
+  backup="$home/state/dotfiles-backups/20260830T000000Z"
+  mkdir -p "$home/.config/nvim" "$backup/.config/nvim"
+  printf 'deployed\n' >"$home/.config/nvim/init.lua"
+  printf 'original\n' >"$backup/.config/nvim/original.lua"
+
+  set +e
+  rollback_output=$(HOME="$home" bash -c '
+    . "$1/bootstrap.sh"
+    DOTFILES_BACKUP_ROOT=$2
+    DOTFILES_ABSENT_TARGETS=("")
+    DOTFILES_MOVED_TARGETS=("" ".config/nvim")
+    rm() { return 73; }
+    dotfiles_rollback_migration
+  ' shell "$REPO_ROOT" "$backup" 2>&1)
+  rollback_status=$?
+  set -e
+
+  assert_equals 1 "$rollback_status" 'cleanup failure did not make rollback fail'
+  [ -f "$backup/.config/nvim/original.lua" ] ||
+    fail 'rollback moved the original directory out of its backup after cleanup failed'
+  [ ! -e "$home/.config/nvim/nvim" ] ||
+    fail 'rollback nested the original directory inside the deployed directory'
+  case $rollback_output in
+    *"could not restore $home/.config/nvim from $backup/.config/nvim; destination still exists; backup remains at $backup"*) : ;;
+    *) fail 'cleanup-failure rollback diagnostic omitted the retained directory backup' ;;
+  esac
+}
+
 test_migration_rejects_unsafe_timestamp_before_mutation() {
   home="$TEST_TMP_ROOT/unsafe-timestamp-home"
   stow="$TEST_TMP_ROOT/unsafe-timestamp-stow"
@@ -743,6 +773,7 @@ test_migration_backs_up_only_managed_targets_and_deploys
 test_merge_compatible_migration_always_reports_created_backup
 test_incomplete_rollback_reports_exact_backup_path
 test_backup_stage_restore_failure_reports_exact_backup_path
+test_rollback_retains_directory_backup_when_cleanup_leaves_destination
 test_migration_rejects_unsafe_timestamp_before_mutation
 test_relative_xdg_state_home_falls_back_inside_home
 test_failed_deployment_removes_new_links_and_restores_every_target

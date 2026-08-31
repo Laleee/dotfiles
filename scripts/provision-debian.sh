@@ -130,13 +130,13 @@ ensure_fd_link() {
 
 install_tree_sitter_cli_if_missing() {
   if dotfiles_tool_path tree-sitter >/dev/null 2>&1; then
-    return 0
+    diagnose_tree_sitter_cli \
+      'refusing to replace the existing installation'
+    return $?
   fi
   "$DOTFILES_NPM_CMD" install --global --prefix "$HOME/.local" tree-sitter-cli
-  if [ ! -x "$HOME/.local/bin/tree-sitter" ]; then
-    dotfiles_error 'npm did not publish the Tree-sitter CLI under ~/.local/bin'
-    return 1
-  fi
+  diagnose_tree_sitter_cli \
+    'npm did not publish a usable Tree-sitter CLI under ~/.local/bin'
 }
 
 provision_debian() {

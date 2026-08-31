@@ -277,6 +277,12 @@ dotfiles_restore_moved_targets() {
   local restore_status=0
   for relative_path in "${DOTFILES_MOVED_TARGETS[@]}"; do
     [ -n "$relative_path" ] || continue
+    if dotfiles_target_exists "$HOME/$relative_path"; then
+      bootstrap_error \
+        "could not restore $HOME/$relative_path from $DOTFILES_BACKUP_ROOT/$relative_path; destination still exists; backup remains at $DOTFILES_BACKUP_ROOT"
+      restore_status=1
+      continue
+    fi
     mkdir -p "$(dirname -- "$HOME/$relative_path")"
     if ! mv "$DOTFILES_BACKUP_ROOT/$relative_path" "$HOME/$relative_path"; then
       bootstrap_error \

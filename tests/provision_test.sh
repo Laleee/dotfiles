@@ -695,6 +695,37 @@ EOF
     "$diagnostic" 'macOS Tree-sitter diagnostic guidance is not precise'
 }
 
+test_macos_provision_rejects_unusable_tree_sitter_command() {
+  home="$TEST_TMP_ROOT/macos-provision-tree-sitter-home"
+  bin="$TEST_TMP_ROOT/macos-provision-tree-sitter-bin"
+  mkdir -p "$home" "$bin"
+  cat >"$bin/brew" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+  cat >"$bin/tree-sitter" <<'EOF'
+#!/bin/sh
+exit 42
+EOF
+  chmod +x "$bin/brew" "$bin/tree-sitter"
+
+  set +e
+  diagnostic=$(HOME="$home" PATH="$bin:/usr/bin:/bin" \
+    DOTFILES_BREW_CMD="$bin/brew" bash -c '
+      . "$1/scripts/provision-macos.sh"
+      provision_common() { :; }
+      regenerate_completions() { :; }
+      provision_macos
+    ' shell "$REPO_ROOT" 2>&1)
+  status=$?
+  set -e
+
+  assert_equals 1 "$status" 'macOS provisioning accepted unusable Tree-sitter CLI'
+  assert_equals \
+    "dotfiles: Tree-sitter CLI is unusable: $bin/tree-sitter; install the tree-sitter-cli Homebrew formula manually" \
+    "$diagnostic" 'macOS provisioning did not explain the unusable Tree-sitter CLI'
+}
+
 make_nvim_fixture() {
   architecture=$1
   fixture_root="$TEST_TMP_ROOT/nvim-fixture-$architecture"
@@ -796,6 +827,37 @@ EOF
   assert_equals 'tree-sitter 0.25.0' \
     "$(PATH="$home/.local/bin:$bin:/usr/bin:/bin" tree-sitter --version)" \
     'Tree-sitter CLI is not usable from the deployed PATH'
+}
+
+test_debian_provision_rejects_unusable_existing_tree_sitter_command() {
+  home="$TEST_TMP_ROOT/debian-broken-tree-sitter-home"
+  bin="$TEST_TMP_ROOT/debian-broken-tree-sitter-bin"
+  receipt="$TEST_TMP_ROOT/debian-broken-tree-sitter-npm-receipt"
+  mkdir -p "$home" "$bin"
+  cat >"$bin/tree-sitter" <<'EOF'
+#!/bin/sh
+exit 42
+EOF
+  cat >"$bin/npm" <<'EOF'
+#!/bin/sh
+printf 'called\n' >>"$DOTFILES_TEST_NPM_RECEIPT"
+EOF
+  chmod +x "$bin/tree-sitter" "$bin/npm"
+
+  set +e
+  diagnostic=$(HOME="$home" PATH="$bin:/usr/bin:/bin" \
+    DOTFILES_TEST_NPM_RECEIPT="$receipt" bash -c '
+      . "$1/scripts/provision-debian.sh"
+      install_tree_sitter_cli_if_missing
+    ' shell "$REPO_ROOT" 2>&1)
+  status=$?
+  set -e
+
+  assert_equals 1 "$status" 'Debian provisioning accepted unusable Tree-sitter CLI'
+  assert_equals \
+    "dotfiles: Tree-sitter CLI is unusable: $bin/tree-sitter; refusing to replace the existing installation" \
+    "$diagnostic" 'Debian provisioning did not explain the unusable Tree-sitter CLI'
+  [ ! -e "$receipt" ] || fail 'Debian provisioning replaced an existing Tree-sitter command'
 }
 
 test_debian_diagnostics_require_tree_sitter_cli_with_install_guidance() {
@@ -979,8 +1041,10 @@ test_failed_neovim_download_cleans_temp_directory
 test_macos_packages_require_brew_and_never_upgrade
 test_macos_diagnostics_accept_installed_outdated_formulas_and_name_missing_formula
 test_macos_diagnostics_require_usable_tree_sitter_command
+test_macos_provision_rejects_unusable_tree_sitter_command
 test_debian_provision_publishes_nvim_without_overwriting_existing_path
 test_debian_tree_sitter_cli_is_installed_once_in_user_prefix
+test_debian_provision_rejects_unusable_existing_tree_sitter_command
 test_debian_diagnostics_require_tree_sitter_cli_with_install_guidance
 test_debian_archive_install_and_fd_link
 test_root_debian_provisioning_does_not_require_sudo

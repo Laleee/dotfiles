@@ -25,6 +25,8 @@ provision_macos_packages() {
 
 provision_macos() {
   provision_macos_packages
+  diagnose_tree_sitter_cli \
+    'install the tree-sitter-cli Homebrew formula manually'
   provision_common
   regenerate_completions
 }
