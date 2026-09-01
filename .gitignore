@@ -16,3 +16,4 @@ herdr/.config/herdr/session.json
 # Local tool state
 .direnv/
 .superpowers/
+docs/superpowers/
