@@ -5,9 +5,7 @@ set -o pipefail
 
 DOTFILES_REPO_ROOT=$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 DOTFILES_STOW_CMD=${DOTFILES_STOW_CMD:-stow}
-DOTFILES_UNAME_CMD=${DOTFILES_UNAME_CMD:-uname}
 DOTFILES_DATE_CMD=${DOTFILES_DATE_CMD:-date}
-DOTFILES_OS_RELEASE_FILE=${DOTFILES_OS_RELEASE_FILE:-/etc/os-release}
 
 DOTFILES_MANAGED_TARGETS=(
   .zshrc
@@ -41,114 +39,6 @@ dotfiles_validate_timestamp_override() {
   esac
 }
 
-dotfiles_detect_architecture() {
-  local machine_architecture
-  if ! machine_architecture=$("$DOTFILES_UNAME_CMD" -m); then
-    bootstrap_error 'cannot identify machine architecture'
-    return 1
-  fi
-  case $machine_architecture in
-    x86_64|amd64|arm64|aarch64) return 0 ;;
-    *)
-      bootstrap_error "unsupported architecture: $machine_architecture"
-      return 2
-      ;;
-  esac
-}
-
-dotfiles_linux_is_debian_family() {
-  local distribution_id
-  local distribution_like
-  if [ ! -r "$DOTFILES_OS_RELEASE_FILE" ]; then
-    bootstrap_error \
-      "cannot identify Linux distribution: $DOTFILES_OS_RELEASE_FILE is missing"
-    return 2
-  fi
-  distribution_id=$(sed -n 's/^ID=//p' "$DOTFILES_OS_RELEASE_FILE" |
-    tr -d '"' | head -n 1)
-  distribution_like=$(sed -n 's/^ID_LIKE=//p' "$DOTFILES_OS_RELEASE_FILE" |
-    tr -d '"' | head -n 1)
-  case " $distribution_id $distribution_like " in
-    *' debian '*|*' ubuntu '*) return 0 ;;
-    *)
-      bootstrap_error "unsupported Linux distribution: ${distribution_id:-unknown}"
-      return 2
-      ;;
-  esac
-}
-
-dotfiles_detect_platform() {
-  local operating_system
-  if ! operating_system=$("$DOTFILES_UNAME_CMD" -s); then
-    bootstrap_error 'cannot identify operating system'
-    return 1
-  fi
-  case $operating_system in
-    Darwin)
-      dotfiles_detect_architecture || return $?
-      printf '%s\n' macos
-      ;;
-    Linux)
-      dotfiles_detect_architecture || return $?
-      dotfiles_linux_is_debian_family || return $?
-      printf '%s\n' debian
-      ;;
-    *)
-      bootstrap_error "unsupported platform: $operating_system"
-      return 2
-      ;;
-  esac
-}
-
-dotfiles_load_platform() {
-  local platform=$1
-  case $platform in
-    macos)
-      # shellcheck source=scripts/provision-macos.sh
-      . "$DOTFILES_REPO_ROOT/scripts/provision-macos.sh"
-      ;;
-    debian)
-      # shellcheck source=scripts/provision-debian.sh
-      . "$DOTFILES_REPO_ROOT/scripts/provision-debian.sh"
-      ;;
-    *)
-      bootstrap_error "unsupported platform: $platform"
-      return 2
-      ;;
-  esac
-}
-
-dotfiles_diagnose_platform() {
-  local platform=$1
-  case $platform in
-    macos) diagnose_macos ;;
-    debian) diagnose_debian ;;
-    *) return 2 ;;
-  esac
-}
-
-dotfiles_provision_platform() {
-  local platform=$1
-  case $platform in
-    macos) provision_macos ;;
-    debian) provision_debian ;;
-    *) return 2 ;;
-  esac
-}
-
-dotfiles_provision_platform_normalized() (
-  local provision_status
-  set +e
-  (
-    set -e
-    dotfiles_provision_platform "$1"
-  )
-  provision_status=$?
-  if [ "$provision_status" -ne 0 ]; then
-    return 1
-  fi
-)
-
 dotfiles_stow_simulate() (
   cd "$DOTFILES_REPO_ROOT"
   "$DOTFILES_STOW_CMD" --simulate --no-folding --target="$HOME" \
@@ -162,6 +52,36 @@ dotfiles_stow_deploy() (
 
 dotfiles_target_exists() {
   [ -e "$1" ] || [ -L "$1" ]
+}
+
+dotfiles_validate_parent_paths() {
+  local relative_path
+  local parent_path
+  local destination
+  local seen_parents=' '
+  local conflict_found=0
+  for relative_path in "${DOTFILES_MANAGED_TARGETS[@]}"; do
+    parent_path=${relative_path%/*}
+    while [ "$parent_path" != "$relative_path" ]; do
+      case $seen_parents in
+        *" $parent_path "*) ;;
+        *)
+          destination=$HOME/$parent_path
+          if dotfiles_target_exists "$destination" && [ ! -d "$destination" ]; then
+            bootstrap_error "unmanaged parent conflict: $destination"
+            conflict_found=1
+          fi
+          seen_parents="$seen_parents$parent_path "
+          ;;
+      esac
+      relative_path=$parent_path
+      parent_path=${relative_path%/*}
+    done
+  done
+  if [ "$conflict_found" -eq 1 ]; then
+    bootstrap_error 'move these parent paths before deploying dotfiles'
+    return 1
+  fi
 }
 
 dotfiles_nvim_tree_is_managed() {
@@ -410,7 +330,6 @@ dotfiles_deploy_migration() {
 
 bootstrap_main() {
   local mode=deploy
-  local platform
   if [ "$#" -gt 1 ]; then
     bootstrap_usage
     return 2
@@ -429,10 +348,11 @@ bootstrap_main() {
     dotfiles_validate_timestamp_override || return $?
   fi
 
-  platform=$(dotfiles_detect_platform) || return $?
-  dotfiles_load_platform "$platform" || return $?
+  dotfiles_validate_parent_paths || return 1
+
   if [ "$mode" = check ]; then
-    if ! dotfiles_diagnose_platform "$platform"; then
+    if dotfiles_have_unmanaged_migratable_targets; then
+      dotfiles_report_conflicts
       return 1
     fi
     return 0
@@ -443,7 +363,6 @@ bootstrap_main() {
     return 1
   fi
 
-  dotfiles_provision_platform_normalized "$platform"
   case $mode in
     deploy) dotfiles_deploy_default ;;
     migrate) dotfiles_deploy_migration ;;

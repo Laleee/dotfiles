@@ -7,6 +7,7 @@ REPO_ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 
 bash_files() {
   printf '%s\n' "$REPO_ROOT/bootstrap.sh"
+  printf '%s\n' "$REPO_ROOT/setup.sh"
   find "$REPO_ROOT/scripts" "$REPO_ROOT/tests" -type f -name '*.sh' -print | sort
 }
 
@@ -56,4 +57,5 @@ run_zsh_syntax_checks
 run_shellcheck
 bash "$REPO_ROOT/tests/provision_test.sh"
 bash "$REPO_ROOT/tests/bootstrap_test.sh"
+bash "$REPO_ROOT/tests/setup_test.sh"
 printf '%s\n' 'ok - portable test runner'

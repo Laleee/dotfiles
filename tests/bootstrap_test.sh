@@ -27,7 +27,7 @@ assert_file_contains() {
     fail "$file does not contain: $expected"
 }
 
-run_with_macos_functions() {
+run_bootstrap() {
   home=$1
   stow_cmd=$2
   receipt=$3
@@ -40,56 +40,11 @@ run_with_macos_functions() {
     bash -c '
       . "$1/bootstrap.sh"
       shift
-      dotfiles_detect_platform() { printf "%s\n" macos; }
-      dotfiles_load_platform() { :; }
-      provision_macos() { printf "%s\n" provision >>"$DOTFILES_TEST_RECEIPT"; }
-      diagnose_macos() { printf "%s\n" diagnose >>"$DOTFILES_TEST_RECEIPT"; }
       if [ "$DOTFILES_TEST_FORCE_ROLLBACK_FAILURE" -eq 1 ]; then
         dotfiles_rollback_migration() { return 1; }
       fi
       bootstrap_main "$@"
     ' shell "$REPO_ROOT" "$@"
-}
-
-run_with_failed_macos_provision() {
-  home=$1
-  stow_cmd=$2
-  receipt=$3
-  HOME="$home" XDG_STATE_HOME="$home/state" \
-    DOTFILES_STOW_CMD="$stow_cmd" DOTFILES_TEST_RECEIPT="$receipt" \
-    DOTFILES_TEST_REPO="$REPO_ROOT" DOTFILES_TIMESTAMP=20260830T000000Z \
-    bash -c '
-      . "$1/bootstrap.sh"
-      shift
-      dotfiles_detect_platform() { printf "%s\n" macos; }
-      dotfiles_load_platform() { :; }
-      provision_macos() {
-        false
-        printf "%s\n" late-provision-step >>"$DOTFILES_TEST_RECEIPT"
-      }
-      bootstrap_main "$@"
-    ' shell "$REPO_ROOT"
-}
-
-run_with_status_73_macos_provision() {
-  home=$1
-  stow_cmd=$2
-  receipt=$3
-  failing_step=$4
-  HOME="$home" XDG_STATE_HOME="$home/state" \
-    DOTFILES_STOW_CMD="$stow_cmd" DOTFILES_TEST_RECEIPT="$receipt" \
-    DOTFILES_TEST_FAILING_STEP="$failing_step" DOTFILES_TEST_REPO="$REPO_ROOT" \
-    DOTFILES_TIMESTAMP=20260830T000000Z bash -c '
-      . "$1/bootstrap.sh"
-      shift
-      dotfiles_detect_platform() { printf "%s\n" macos; }
-      dotfiles_load_platform() { :; }
-      provision_macos() {
-        "$DOTFILES_TEST_FAILING_STEP"
-        printf "%s\n" late-provision-step >>"$DOTFILES_TEST_RECEIPT"
-      }
-      bootstrap_main "$@"
-    ' shell "$REPO_ROOT"
 }
 
 make_stow_double() {
@@ -215,92 +170,80 @@ assert_originals_restored() {
     'an unrelated path was changed'
 }
 
-test_invalid_arguments_and_unsupported_platform_exit_two() {
+test_invalid_arguments_exit_two() {
   home="$TEST_TMP_ROOT/arguments-home"
-  bin="$TEST_TMP_ROOT/arguments-bin"
-  mkdir -p "$home" "$bin"
+  mkdir -p "$home"
 
   set +e
   HOME="$home" bash "$REPO_ROOT/bootstrap.sh" --unknown >/dev/null 2>&1
   invalid_status=$?
   set -e
   assert_equals 2 "$invalid_status" 'invalid argument did not exit 2'
+}
 
+test_bootstrap_deploys_without_platform_provisioning() {
+  home="$TEST_TMP_ROOT/deployment-only-home"
+  bin="$TEST_TMP_ROOT/deployment-only-bin"
+  stow="$TEST_TMP_ROOT/deployment-only-stow"
+  receipt="$TEST_TMP_ROOT/deployment-only-receipt"
+  mkdir -p "$home" "$bin"
   cat >"$bin/uname" <<'EOF'
 #!/bin/sh
 printf 'Plan9\n'
 EOF
   chmod +x "$bin/uname"
-  set +e
-  unsupported_output=$(HOME="$home" DOTFILES_UNAME_CMD="$bin/uname" \
-    bash "$REPO_ROOT/bootstrap.sh" --check 2>&1)
-  unsupported_status=$?
-  set -e
-  assert_equals 2 "$unsupported_status" 'unsupported platform did not exit 2'
-  case $unsupported_output in
-    *'unsupported platform: Plan9'*) : ;;
-    *) fail 'unsupported platform diagnostic is missing' ;;
-  esac
+  make_stow_double "$stow" success
+
+  HOME="$home" DOTFILES_STOW_CMD="$stow" DOTFILES_UNAME_CMD="$bin/uname" \
+    DOTFILES_TEST_RECEIPT="$receipt" DOTFILES_TEST_REPO="$REPO_ROOT" \
+    bash "$REPO_ROOT/bootstrap.sh"
+
+  [ -L "$home/.zshrc" ] || fail 'deployment-only bootstrap did not link .zshrc'
 }
 
-test_check_dispatches_read_only_diagnostics() {
+test_check_reports_dotfile_conflicts_without_running_stow() {
   home="$TEST_TMP_ROOT/check-home"
   stow="$TEST_TMP_ROOT/check-stow"
   receipt="$TEST_TMP_ROOT/check-receipt"
   mkdir -p "$home"
+  printf 'unmanaged\n' >"$home/.zshrc"
   make_stow_double "$stow" conflict
 
-  run_with_macos_functions "$home" "$stow" "$receipt" --check
+  set +e
+  check_output=$(run_bootstrap "$home" "$stow" "$receipt" --check 2>&1)
+  check_status=$?
+  set -e
 
-  assert_equals diagnose "$(cat "$receipt")" '--check did not dispatch diagnostics only'
-  [ -z "$(find "$home" -mindepth 1 -print -quit)" ] || fail '--check mutated HOME'
+  assert_equals 1 "$check_status" '--check accepted an unmanaged target'
+  case $check_output in
+    *"$home/.zshrc"*) : ;;
+    *) fail '--check did not report the unmanaged target' ;;
+  esac
+  assert_equals unmanaged "$(cat "$home/.zshrc")" '--check mutated the conflict'
+  [ ! -e "$receipt" ] || fail '--check invoked Stow'
 }
 
-test_failed_provisioning_never_deploys_after_a_later_success() {
-  home="$TEST_TMP_ROOT/provision-failure-home"
-  stow="$TEST_TMP_ROOT/provision-failure-stow"
-  receipt="$TEST_TMP_ROOT/provision-failure-receipt"
+test_check_reports_parent_conflicts_without_running_stow() {
+  home="$TEST_TMP_ROOT/check-parent-home"
+  stow="$TEST_TMP_ROOT/check-parent-stow"
+  receipt="$TEST_TMP_ROOT/check-parent-receipt"
   mkdir -p "$home"
+  printf 'blocks managed children\n' >"$home/.config"
   make_stow_double "$stow" success
 
   set +e
-  run_with_failed_macos_provision "$home" "$stow" "$receipt" \
-    >"$TEST_TMP_ROOT/provision-failure-run.out" 2>&1
-  provisioning_status=$?
+  check_output=$(run_bootstrap "$home" "$stow" "$receipt" --check 2>&1)
+  check_status=$?
   set -e
 
-  assert_equals 1 "$provisioning_status" 'failed provisioning did not exit 1'
-  if [ -e "$receipt" ] && grep -F -- 'late-provision-step' "$receipt" >/dev/null 2>&1; then
-    fail 'provisioning continued after an early failure'
-  fi
-  if [ -e "$receipt" ] && grep -F -- '|--no-folding' "$receipt" >/dev/null 2>&1; then
-    fail 'failed provisioning attempted deployment'
-  fi
-  [ ! -L "$home/.zshrc" ] || fail 'failed provisioning deployed .zshrc'
-}
-
-test_status_73_provisioning_failure_is_normalized_without_later_steps() {
-  home="$TEST_TMP_ROOT/provision-73-home"
-  stow="$TEST_TMP_ROOT/provision-73-stow"
-  receipt="$TEST_TMP_ROOT/provision-73-receipt"
-  failing_step="$TEST_TMP_ROOT/provision-73-step"
-  mkdir -p "$home"
-  make_stow_double "$stow" success
-  printf '#!/bin/sh\nexit 73\n' >"$failing_step"
-  chmod +x "$failing_step"
-
-  set +e
-  run_with_status_73_macos_provision "$home" "$stow" "$receipt" "$failing_step" \
-    >"$TEST_TMP_ROOT/provision-73-run.out" 2>&1
-  provisioning_status=$?
-  set -e
-
-  assert_equals 1 "$provisioning_status" \
-    'status 73 provisioning failure escaped the public exit contract'
-  if [ -e "$receipt" ]; then
-    fail 'status 73 provisioning continued to a later step or invoked Stow'
-  fi
-  [ ! -L "$home/.zshrc" ] || fail 'status 73 provisioning deployed .zshrc'
+  assert_equals 1 "$check_status" '--check accepted a blocking parent path'
+  case $check_output in
+    *"$home/.config"*) : ;;
+    *) fail '--check did not report the blocking parent path' ;;
+  esac
+  assert_equals 'blocks managed children' "$(cat "$home/.config")" \
+    '--check mutated the blocking parent path'
+  [ ! -e "$receipt" ] || fail '--check invoked Stow for a parent conflict'
 }
 
 test_default_preflight_refuses_unmanaged_target() {
@@ -313,7 +256,7 @@ test_default_preflight_refuses_unmanaged_target() {
   make_stow_double "$stow" conflict
 
   set +e
-  conflict_output=$(run_with_macos_functions "$home" "$stow" "$receipt" 2>&1)
+  conflict_output=$(run_bootstrap "$home" "$stow" "$receipt" 2>&1)
   conflict_status=$?
   set -e
 
@@ -332,10 +275,10 @@ test_default_preflight_refuses_unmanaged_target() {
     *) fail 'default conflict did not explain --migrate' ;;
   esac
   [ ! -e "$receipt" ] ||
-    fail 'default conflict provisioned or invoked Stow before refusal'
+    fail 'default conflict invoked Stow before refusal'
 }
 
-test_default_preflight_refuses_merge_compatible_unmanaged_nvim_before_provisioning() {
+test_default_preflight_refuses_merge_compatible_unmanaged_nvim_before_stow() {
   home="$TEST_TMP_ROOT/preflight-nvim-home"
   stow="$TEST_TMP_ROOT/preflight-nvim-stow"
   receipt="$TEST_TMP_ROOT/preflight-nvim-receipt"
@@ -344,7 +287,7 @@ test_default_preflight_refuses_merge_compatible_unmanaged_nvim_before_provisioni
   make_stow_double "$stow" success
 
   set +e
-  preflight_output=$(run_with_macos_functions "$home" "$stow" "$receipt" 2>&1)
+  preflight_output=$(run_bootstrap "$home" "$stow" "$receipt" 2>&1)
   preflight_status=$?
   set -e
 
@@ -357,7 +300,7 @@ test_default_preflight_refuses_merge_compatible_unmanaged_nvim_before_provisioni
     *) fail 'default preflight omitted the exact Neovim path or migration guidance' ;;
   esac
   [ ! -e "$receipt" ] ||
-    fail 'default preflight provisioned or invoked Stow before refusing the target'
+    fail 'default preflight invoked Stow before refusing the target'
   [ ! -e "$home/.zshrc" ] && [ ! -L "$home/.zshrc" ] ||
     fail 'default preflight deployed configuration'
 }
@@ -371,7 +314,7 @@ test_migration_backs_up_only_managed_targets_and_deploys() {
   seed_managed_conflicts "$home"
   make_stow_double "$stow" migrate-success
 
-  run_with_macos_functions "$home" "$stow" "$receipt" --migrate
+  run_bootstrap "$home" "$stow" "$receipt" --migrate
 
   assert_equals 'old zshrc' "$(cat "$backup/.zshrc")" 'backup omitted .zshrc'
   assert_equals 'old zprofile' "$(cat "$backup/.zprofile")" 'backup omitted .zprofile'
@@ -407,7 +350,7 @@ test_merge_compatible_migration_always_reports_created_backup() {
   printf 'keep merge-compatible config\n' >"$home/.config/nvim/lua/user.lua"
   make_stow_double "$stow" success
 
-  migration_output=$(run_with_macos_functions "$home" "$stow" "$receipt" --migrate)
+  migration_output=$(run_bootstrap "$home" "$stow" "$receipt" --migrate)
 
   assert_equals "dotfiles: backup created at $backup" "$migration_output" \
     'merge-compatible migration did not report its created backup'
@@ -430,7 +373,7 @@ test_incomplete_rollback_reports_exact_backup_path() {
   DOTFILES_TEST_FORCE_ROLLBACK_FAILURE=1
   export DOTFILES_TEST_FORCE_ROLLBACK_FAILURE
   set +e
-  rollback_output=$(run_with_macos_functions "$home" "$stow" "$receipt" --migrate 2>&1)
+  rollback_output=$(run_bootstrap "$home" "$stow" "$receipt" --migrate 2>&1)
   rollback_status=$?
   set -e
   unset DOTFILES_TEST_FORCE_ROLLBACK_FAILURE
@@ -515,7 +458,7 @@ test_migration_rejects_unsafe_timestamp_before_mutation() {
   DOTFILES_TEST_TIMESTAMP='../escaped-backup'
   export DOTFILES_TEST_TIMESTAMP
   set +e
-  timestamp_output=$(run_with_macos_functions "$home" "$stow" "$receipt" --migrate 2>&1)
+  timestamp_output=$(run_bootstrap "$home" "$stow" "$receipt" --migrate 2>&1)
   timestamp_status=$?
   set -e
   unset DOTFILES_TEST_TIMESTAMP
@@ -529,7 +472,7 @@ test_migration_rejects_unsafe_timestamp_before_mutation() {
     'unsafe migration timestamp moved the managed target'
   [ ! -e "$escaped" ] || fail 'unsafe migration timestamp escaped the backup root'
   [ ! -e "$receipt" ] ||
-    fail 'unsafe migration timestamp provisioned or invoked Stow before rejection'
+    fail 'unsafe migration timestamp invoked Stow before rejection'
 }
 
 test_relative_xdg_state_home_falls_back_inside_home() {
@@ -546,7 +489,7 @@ test_relative_xdg_state_home_falls_back_inside_home() {
   export DOTFILES_TEST_XDG_STATE_HOME
   migration_output=$(
     cd "$work"
-    run_with_macos_functions "$home" "$stow" "$receipt" --migrate
+    run_bootstrap "$home" "$stow" "$receipt" --migrate
   )
   unset DOTFILES_TEST_XDG_STATE_HOME
 
@@ -568,7 +511,7 @@ test_failed_deployment_removes_new_links_and_restores_every_target() {
   make_stow_double "$stow" deploy-failure
 
   set +e
-  run_with_macos_functions "$home" "$stow" "$receipt" --migrate \
+  run_bootstrap "$home" "$stow" "$receipt" --migrate \
     >"$TEST_TMP_ROOT/rollback-run.out" 2>&1
   deployment_status=$?
   set -e
@@ -589,7 +532,7 @@ test_failed_deployment_removes_link_inside_existing_nvim_directory() {
   make_stow_double "$stow" partial-nvim-deploy-failure
 
   set +e
-  run_with_macos_functions "$home" "$stow" "$receipt" --migrate \
+  run_bootstrap "$home" "$stow" "$receipt" --migrate \
     >"$TEST_TMP_ROOT/partial-nvim-run.out" 2>&1
   deployment_status=$?
   set -e
@@ -613,7 +556,7 @@ test_failed_deployment_restores_partially_managed_nvim_directory() {
   make_stow_double "$stow" partial-managed-nvim-deploy-failure
 
   set +e
-  run_with_macos_functions "$home" "$stow" "$receipt" --migrate \
+  run_bootstrap "$home" "$stow" "$receipt" --migrate \
     >"$TEST_TMP_ROOT/partial-managed-nvim-run.out" 2>&1
   deployment_status=$?
   set -e
@@ -643,7 +586,7 @@ test_migration_does_not_back_up_a_fully_managed_nvim_tree() {
   done < <(find "$source_path" \( -type f -o -type l \) -print)
   make_stow_double "$stow" fully-managed-nvim-success
 
-  run_with_macos_functions "$home" "$stow" "$receipt" --migrate
+  run_bootstrap "$home" "$stow" "$receipt" --migrate
 
   [ ! -e "$home/state/dotfiles-backups/20260830T000000Z" ] ||
     fail 'migration backed up a fully managed Neovim tree'
@@ -660,7 +603,7 @@ test_successful_default_deploys_with_exact_contract() {
   mkdir -p "$home"
   make_stow_double "$stow" success
 
-  run_with_macos_functions "$home" "$stow" "$receipt"
+  run_bootstrap "$home" "$stow" "$receipt"
 
   assert_file_contains "$receipt" \
     "$REPO_ROOT|--simulate --no-folding --target=$home zsh nvim herdr"
@@ -698,45 +641,6 @@ test_real_stow_smoke_validates_package_layout_and_no_folding() {
     fail 'real Stow linked Neovim from the wrong package source'
 }
 
-test_platform_detection_classifies_supported_operating_systems_and_architectures() {
-  bin="$TEST_TMP_ROOT/platform-bin"
-  os_release="$TEST_TMP_ROOT/platform-os-release"
-  mkdir -p "$bin"
-  cat >"$bin/uname" <<'EOF'
-#!/bin/sh
-set -eu
-case $1 in
-  -s) printf '%s\n' "$DOTFILES_TEST_OS" ;;
-  -m) printf '%s\n' "$DOTFILES_TEST_ARCH" ;;
-  *) exit 64 ;;
-esac
-EOF
-  chmod +x "$bin/uname"
-  printf 'ID=ubuntu\nID_LIKE=debian\n' >"$os_release"
-
-  macos=$(DOTFILES_UNAME_CMD="$bin/uname" DOTFILES_OS_RELEASE_FILE="$os_release" \
-    DOTFILES_TEST_OS=Darwin DOTFILES_TEST_ARCH=arm64 bash -c \
-    '. "$1/bootstrap.sh"; dotfiles_detect_platform' shell "$REPO_ROOT")
-  debian=$(DOTFILES_UNAME_CMD="$bin/uname" DOTFILES_OS_RELEASE_FILE="$os_release" \
-    DOTFILES_TEST_OS=Linux DOTFILES_TEST_ARCH=x86_64 bash -c \
-    '. "$1/bootstrap.sh"; dotfiles_detect_platform' shell "$REPO_ROOT")
-
-  set +e
-  unsupported_output=$(DOTFILES_UNAME_CMD="$bin/uname" DOTFILES_OS_RELEASE_FILE="$os_release" \
-    DOTFILES_TEST_OS=Linux DOTFILES_TEST_ARCH=riscv64 bash -c \
-    '. "$1/bootstrap.sh"; dotfiles_detect_platform' shell "$REPO_ROOT" 2>&1)
-  unsupported_status=$?
-  set -e
-
-  assert_equals macos "$macos" 'Darwin arm64 was not classified as macOS'
-  assert_equals debian "$debian" 'Ubuntu x86_64 was not classified as Debian-family Linux'
-  assert_equals 2 "$unsupported_status" 'unsupported architecture did not exit 2'
-  case $unsupported_output in
-    *'unsupported architecture: riscv64'*) : ;;
-    *) fail 'unsupported architecture diagnostic is missing' ;;
-  esac
-}
-
 test_bootstrap_is_idempotent_and_never_writes_herdr_runtime_state_to_repository() {
   home="$TEST_TMP_ROOT/idempotent-home"
   stow="$TEST_TMP_ROOT/idempotent-stow"
@@ -746,11 +650,9 @@ test_bootstrap_is_idempotent_and_never_writes_herdr_runtime_state_to_repository(
   printf 'keep history\n' >"$home/.config/herdr/history.db"
   make_stow_double "$stow" success
 
-  run_with_macos_functions "$home" "$stow" "$receipt"
-  run_with_macos_functions "$home" "$stow" "$receipt"
+  run_bootstrap "$home" "$stow" "$receipt"
+  run_bootstrap "$home" "$stow" "$receipt"
 
-  assert_equals 2 "$(grep -F -c -- provision "$receipt")" \
-    'two bootstrap runs did not provision twice'
   assert_equals 2 "$(grep -F -c -- '|--no-folding' "$receipt")" \
     'two bootstrap runs did not deploy twice'
   [ -L "$home/.zshrc" ] || fail 'second bootstrap run removed .zshrc'
@@ -763,12 +665,12 @@ test_bootstrap_is_idempotent_and_never_writes_herdr_runtime_state_to_repository(
     'bootstrap changed the repository while preserving Herdr runtime state'
 }
 
-test_invalid_arguments_and_unsupported_platform_exit_two
-test_check_dispatches_read_only_diagnostics
-test_failed_provisioning_never_deploys_after_a_later_success
-test_status_73_provisioning_failure_is_normalized_without_later_steps
+test_invalid_arguments_exit_two
+test_bootstrap_deploys_without_platform_provisioning
+test_check_reports_dotfile_conflicts_without_running_stow
+test_check_reports_parent_conflicts_without_running_stow
 test_default_preflight_refuses_unmanaged_target
-test_default_preflight_refuses_merge_compatible_unmanaged_nvim_before_provisioning
+test_default_preflight_refuses_merge_compatible_unmanaged_nvim_before_stow
 test_migration_backs_up_only_managed_targets_and_deploys
 test_merge_compatible_migration_always_reports_created_backup
 test_incomplete_rollback_reports_exact_backup_path
@@ -782,6 +684,5 @@ test_failed_deployment_restores_partially_managed_nvim_directory
 test_migration_does_not_back_up_a_fully_managed_nvim_tree
 test_successful_default_deploys_with_exact_contract
 test_real_stow_smoke_validates_package_layout_and_no_folding
-test_platform_detection_classifies_supported_operating_systems_and_architectures
 test_bootstrap_is_idempotent_and_never_writes_herdr_runtime_state_to_repository
 printf 'ok - bootstrap behavior\n'
