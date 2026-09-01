@@ -29,9 +29,12 @@ test_tree_aliases_and_graph_palette() {
   git -C "$repository" -c user.name='Test User' -c user.email=test@example.test \
     commit --allow-empty -q -m 'initial commit'
 
-  tree_output=$(HOME="$home" git -C "$repository" tree --color=never)
-  gt_output=$(HOME="$home" git -C "$repository" gt --color=never)
-  palette=$(HOME="$home" git config --global --get log.graphColors)
+  tree_output=$(HOME="$home" XDG_CONFIG_HOME="$home/.config" \
+    git -C "$repository" tree --color=never)
+  gt_output=$(HOME="$home" XDG_CONFIG_HOME="$home/.config" \
+    git -C "$repository" gt --color=never)
+  palette=$(HOME="$home" XDG_CONFIG_HOME="$home/.config" \
+    git config --global --get log.graphColors)
 
   assert_equals "$tree_output" "$gt_output" 'git gt did not delegate to git tree'
   case $tree_output in
@@ -55,11 +58,15 @@ test_xdg_config_complements_base_and_local_config() {
   git -C "$repository" init -q
   git -C "$repository" config user.name 'Local User'
   git -C "$repository" config user.email local@example.test
-  HOME="$home" git -C "$repository" commit --allow-empty -q -m 'layered config'
+  HOME="$home" XDG_CONFIG_HOME="$home/.config" \
+    git -C "$repository" commit --allow-empty -q -m 'layered config'
 
-  tree_output=$(HOME="$home" git -C "$repository" tree --color=never)
-  palette=$(HOME="$home" git config --global --get log.graphColors)
-  identity=$(HOME="$home" git -C "$repository" config --get user.name)
+  tree_output=$(HOME="$home" XDG_CONFIG_HOME="$home/.config" \
+    git -C "$repository" tree --color=never)
+  palette=$(HOME="$home" XDG_CONFIG_HOME="$home/.config" \
+    git config --global --get log.graphColors)
+  identity=$(HOME="$home" XDG_CONFIG_HOME="$home/.config" \
+    git -C "$repository" config --get user.name)
 
   case $tree_output in
     *'layered config'*'<Local User>'*) : ;;
