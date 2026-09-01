@@ -21,18 +21,17 @@ assert_equals() {
 }
 
 test_tree_aliases_and_graph_palette() {
-  config="$REPO_ROOT/git/.config/git/config"
+  home="$TEST_TMP_ROOT/alias-home"
   repository="$TEST_TMP_ROOT/repository"
-  mkdir -p "$repository"
+  mkdir -p "$home/.config/git" "$repository"
+  ln -s "$REPO_ROOT/git/.config/git/config" "$home/.config/git/config"
   git -C "$repository" init -q
   git -C "$repository" -c user.name='Test User' -c user.email=test@example.test \
     commit --allow-empty -q -m 'initial commit'
 
-  tree_output=$(GIT_CONFIG_GLOBAL="$config" \
-    git -C "$repository" tree --color=never)
-  gt_output=$(GIT_CONFIG_GLOBAL="$config" \
-    git -C "$repository" gt --color=never)
-  palette=$(git config --file "$config" --get log.graphColors)
+  tree_output=$(HOME="$home" git -C "$repository" tree --color=never)
+  gt_output=$(HOME="$home" git -C "$repository" gt --color=never)
+  palette=$(HOME="$home" git config --global --get log.graphColors)
 
   assert_equals "$tree_output" "$gt_output" 'git gt did not delegate to git tree'
   case $tree_output in
