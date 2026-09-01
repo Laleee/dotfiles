@@ -106,7 +106,8 @@ link_managed() {
   ln -s "$source_path" "$destination_path"
 }
 
-mkdir -p "$HOME/.config/nvim" "$HOME/.config/markdownlint" "$HOME/.config/herdr"
+mkdir -p "$HOME/.config/nvim" "$HOME/.config/markdownlint" \
+  "$HOME/.config/herdr" "$HOME/.config/git"
 link_managed "$DOTFILES_TEST_REPO/zsh/.zshrc" "$HOME/.zshrc"
 if [ "$DOTFILES_TEST_STOW_BEHAVIOR" = deploy-failure ]; then
   link_managed "$DOTFILES_TEST_REPO/nvim/.config/nvim/init.lua" "$HOME/.config/nvim/init.lua"
@@ -132,6 +133,8 @@ link_managed "$DOTFILES_TEST_REPO/nvim/.config/markdownlint/.markdownlint.yaml" 
   "$HOME/.config/markdownlint/.markdownlint.yaml"
 link_managed "$DOTFILES_TEST_REPO/herdr/.config/herdr/config.toml" \
   "$HOME/.config/herdr/config.toml"
+link_managed "$DOTFILES_TEST_REPO/git/.config/git/config" \
+  "$HOME/.config/git/config"
 EOF
   chmod +x "$destination"
   DOTFILES_TEST_STOW_BEHAVIOR=$behavior
@@ -141,12 +144,13 @@ EOF
 seed_managed_conflicts() {
   home=$1
   mkdir -p "$home/.config/nvim" "$home/.config/markdownlint" \
-    "$home/.config/herdr/nested"
+    "$home/.config/herdr/nested" "$home/.config/git"
   printf 'old zshrc\n' >"$home/.zshrc"
   printf 'old zprofile\n' >"$home/.zprofile"
   printf 'old init\n' >"$home/.config/nvim/init.lua"
   printf 'old markdownlint\n' >"$home/.config/markdownlint/.markdownlint.yaml"
   printf 'old herdr config\n' >"$home/.config/herdr/config.toml"
+  printf 'old git config\n' >"$home/.config/git/config"
   printf 'keep history\n' >"$home/.config/herdr/history.db"
   printf 'keep cache\n' >"$home/.config/herdr/nested/cache"
   printf 'keep unrelated\n' >"$home/notes.txt"
@@ -162,6 +166,8 @@ assert_originals_restored() {
     'Markdownlint was not restored'
   assert_equals 'old herdr config' "$(cat "$home/.config/herdr/config.toml")" \
     'Herdr config was not restored'
+  assert_equals 'old git config' "$(cat "$home/.config/git/config")" \
+    'Git config was not restored'
   assert_equals 'keep history' "$(cat "$home/.config/herdr/history.db")" \
     'Herdr history was not preserved'
   assert_equals 'keep cache' "$(cat "$home/.config/herdr/nested/cache")" \
@@ -326,6 +332,8 @@ test_migration_backs_up_only_managed_targets_and_deploys() {
     'backup omitted Markdownlint'
   assert_equals 'old herdr config' "$(cat "$backup/.config/herdr/config.toml")" \
     'backup omitted Herdr config'
+  assert_equals 'old git config' "$(cat "$backup/.config/git/config")" \
+    'backup omitted Git config'
   [ ! -e "$backup/.config/herdr/history.db" ] || fail 'backup moved Herdr history'
   [ ! -e "$backup/.config/herdr/nested" ] || fail 'backup moved Herdr cache'
   assert_equals 'keep history' "$(cat "$home/.config/herdr/history.db")" \
@@ -336,8 +344,9 @@ test_migration_backs_up_only_managed_targets_and_deploys() {
     'migration changed an unrelated path'
   [ -L "$home/.zshrc" ] || fail 'migration did not deploy .zshrc'
   [ -L "$home/.config/nvim/init.lua" ] || fail 'migration did not deploy Neovim'
+  [ -L "$home/.config/git/config" ] || fail 'migration did not deploy Git config'
   assert_file_contains "$receipt" \
-    "$REPO_ROOT|--no-folding --target=$home zsh nvim herdr"
+    "$REPO_ROOT|--no-folding --target=$home zsh nvim herdr git"
   simulation_count=$(grep -F -c -- '|--simulate --no-folding' "$receipt")
   assert_equals 2 "$simulation_count" 'migration did not simulate before and after backup'
 }
@@ -599,7 +608,7 @@ test_migration_does_not_back_up_a_fully_managed_nvim_tree() {
   simulation_count=$(grep -F -c -- '|--simulate --no-folding' "$receipt")
   assert_equals 1 "$simulation_count" 'migration re-simulated a fully managed Neovim tree'
   assert_file_contains "$receipt" \
-    "$REPO_ROOT|--no-folding --target=$home zsh nvim herdr"
+    "$REPO_ROOT|--no-folding --target=$home zsh nvim herdr git"
 }
 
 test_successful_default_deploys_with_exact_contract() {
@@ -612,10 +621,11 @@ test_successful_default_deploys_with_exact_contract() {
   run_bootstrap "$home" "$stow" "$receipt"
 
   assert_file_contains "$receipt" \
-    "$REPO_ROOT|--simulate --no-folding --target=$home zsh nvim herdr"
+    "$REPO_ROOT|--simulate --no-folding --target=$home zsh nvim herdr git"
   assert_file_contains "$receipt" \
-    "$REPO_ROOT|--no-folding --target=$home zsh nvim herdr"
+    "$REPO_ROOT|--no-folding --target=$home zsh nvim herdr git"
   [ -L "$home/.zshrc" ] || fail 'default mode did not deploy configuration'
+  [ -L "$home/.config/git/config" ] || fail 'default mode did not deploy Git config'
 }
 
 test_real_stow_smoke_validates_package_layout_and_no_folding() {
@@ -625,8 +635,8 @@ test_real_stow_smoke_validates_package_layout_and_no_folding() {
 
   (
     cd "$REPO_ROOT"
-    stow --simulate --no-folding --target="$home" zsh nvim herdr
-    stow --no-folding --target="$home" zsh nvim herdr
+    stow --simulate --no-folding --target="$home" zsh nvim herdr git
+    stow --no-folding --target="$home" zsh nvim herdr git
   )
 
   if [ ! -d "$home/.config" ] || [ -L "$home/.config" ]; then
@@ -640,7 +650,8 @@ test_real_stow_smoke_validates_package_layout_and_no_folding() {
     .zprofile \
     .config/nvim/init.lua \
     .config/markdownlint/.markdownlint.yaml \
-    .config/herdr/config.toml
+    .config/herdr/config.toml \
+    .config/git/config
   do
     [ -L "$home/$linked_path" ] ||
       fail "real Stow did not deploy the expected leaf link: $linked_path"

@@ -1,0 +1,6 @@
+[alias]
+    tree = "log --graph --decorate --all --pretty=format:'%C(#e0af68)%h%C(#7dcfff)%d %C(#c0caf5)%s %C(#565f89)%cr %C(#7aa2f7)<%an>%C(reset)'"
+    gt = tree
+
+[log]
+    graphColors = "#7aa2f7,#bb9af7,#7dcfff,#9ece6a,#e0af68,#f7768e,#ff9e64"

@@ -58,4 +58,5 @@ run_shellcheck
 bash "$REPO_ROOT/tests/provision_test.sh"
 bash "$REPO_ROOT/tests/bootstrap_test.sh"
 bash "$REPO_ROOT/tests/setup_test.sh"
+bash "$REPO_ROOT/tests/git_test.sh"
 printf '%s\n' 'ok - portable test runner'

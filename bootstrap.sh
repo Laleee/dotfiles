@@ -13,6 +13,7 @@ DOTFILES_MANAGED_TARGETS=(
   .config/nvim
   .config/markdownlint/.markdownlint.yaml
   .config/herdr/config.toml
+  .config/git/config
 )
 # Bash 3.2 treats an empty array as unset under `set -u`. Keep an empty
 # sentinel and skip it when iterating so sourceable functions remain portable.
@@ -42,12 +43,12 @@ dotfiles_validate_timestamp_override() {
 dotfiles_stow_simulate() (
   cd "$DOTFILES_REPO_ROOT"
   "$DOTFILES_STOW_CMD" --simulate --no-folding --target="$HOME" \
-    zsh nvim herdr
+    zsh nvim herdr git
 )
 
 dotfiles_stow_deploy() (
   cd "$DOTFILES_REPO_ROOT"
-  "$DOTFILES_STOW_CMD" --no-folding --target="$HOME" zsh nvim herdr
+  "$DOTFILES_STOW_CMD" --no-folding --target="$HOME" zsh nvim herdr git
 )
 
 dotfiles_target_exists() {
@@ -120,6 +121,9 @@ dotfiles_target_is_managed() {
       ;;
     .config/herdr/config.toml)
       source_path=$DOTFILES_REPO_ROOT/herdr/$relative_path
+      ;;
+    .config/git/config)
+      source_path=$DOTFILES_REPO_ROOT/git/$relative_path
       ;;
     *) return 1 ;;
   esac

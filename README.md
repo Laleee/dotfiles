@@ -1,8 +1,8 @@
 # Portable dotfiles
 
-Portable Zsh, Neovim/LazyVim, Markdownlint, and Herdr configuration. Supported
-platforms are macOS with Homebrew and current Debian/Ubuntu, each on `x86_64`
-or `arm64` only. Deployment uses GNU Stow with `--no-folding`.
+Portable Git, Zsh, Neovim/LazyVim, Markdownlint, and Herdr configuration.
+Supported platforms are macOS with Homebrew and current Debian/Ubuntu, each on
+`x86_64` or `arm64` only. Deployment uses GNU Stow with `--no-folding`.
 
 ## First install
 
@@ -19,7 +19,7 @@ On macOS, install Homebrew before running the script. On Debian/Ubuntu, the
 script uses `apt-get` through `sudo` when necessary and includes `zsh` and the
 `build-essential` compiler toolchain. The script installs only missing
 dependencies, clones only missing shell dependencies, and deploys the `zsh`,
-`nvim`, and `herdr` Stow packages to `$HOME`. It does not silently upgrade
+`nvim`, `herdr`, and `git` Stow packages to `$HOME`. It does not silently upgrade
 installed packages, user-local tools, or existing clones.
 
 `setup.sh` is only an orchestrator: it runs a dotfile conflict preflight, calls
@@ -28,7 +28,7 @@ the matching existing `scripts/provision-macos.sh` or
 deploy configuration. `bootstrap.sh` itself never installs packages, downloads
 tools, clones plugins, or generates completions.
 
-Before provisioning, setup checks all five managed targets below. If one
+Before provisioning, setup checks all six managed targets below. If one
 already exists but is not managed by this repository, it prints the exact path
 and stops without provisioning or changing `$HOME`. Once that preflight is
 clear, setup provisions the machine and bootstrap simulates the Stow deployment
@@ -38,6 +38,7 @@ before creating links:
 - `~/.config/nvim`
 - `~/.config/markdownlint/.markdownlint.yaml`
 - `~/.config/herdr/config.toml`
+- `~/.config/git/config`
 
 To deploy only the repository configuration on an already provisioned machine,
 run:
@@ -96,7 +97,8 @@ for path in \
   .zprofile \
   .config/nvim \
   .config/markdownlint/.markdownlint.yaml \
-  .config/herdr/config.toml
+  .config/herdr/config.toml \
+  .config/git/config
 do
   [ -e "$backup_dir/$path" ] || [ -L "$backup_dir/$path" ] || continue
   rm -rf "$HOME/$path"
@@ -158,6 +160,21 @@ session:
 ```sh
 chsh -s "$(command -v zsh)"
 ```
+
+## Git aliases
+
+The managed `~/.config/git/config` complements `~/.gitconfig` and
+repository-local `.git/config` files. It defines only the graph palette and
+these equivalent commands, so identity, credentials, signing, and unrelated
+Git settings remain outside this repository:
+
+```sh
+git tree
+git gt
+```
+
+If `~/.gitconfig` defines the same alias or palette keys, its values take
+precedence over these dotfiles defaults.
 
 ## Neovim and optional tools
 
