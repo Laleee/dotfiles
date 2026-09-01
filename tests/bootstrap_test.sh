@@ -301,8 +301,9 @@ test_default_preflight_refuses_merge_compatible_unmanaged_nvim_before_stow() {
   esac
   [ ! -e "$receipt" ] ||
     fail 'default preflight invoked Stow before refusing the target'
-  [ ! -e "$home/.zshrc" ] && [ ! -L "$home/.zshrc" ] ||
+  if [ -e "$home/.zshrc" ] || [ -L "$home/.zshrc" ]; then
     fail 'default preflight deployed configuration'
+  fi
 }
 
 test_migration_backs_up_only_managed_targets_and_deploys() {
@@ -540,8 +541,11 @@ test_failed_deployment_removes_link_inside_existing_nvim_directory() {
   assert_equals 1 "$deployment_status" 'partial Neovim deployment did not exit 1'
   assert_equals 'keep nvim state' "$(cat "$home/.config/nvim/lua/user.lua")" \
     'rollback changed pre-existing Neovim state'
-  [ ! -e "$home/.config/nvim/init.lua" ] && [ ! -L "$home/.config/nvim/init.lua" ] ||
+  if [ -e "$home/.config/nvim/init.lua" ] ||
+    [ -L "$home/.config/nvim/init.lua" ]
+  then
     fail 'rollback left a partial Neovim link'
+  fi
   assert_equals 'keep history' "$(cat "$home/.config/herdr/history.db")" \
     'rollback changed unrelated Herdr state'
 }
@@ -566,9 +570,11 @@ test_failed_deployment_restores_partially_managed_nvim_directory() {
     fail 'rollback removed the original managed Neovim link'
   [ "$home/.config/nvim/init.lua" -ef "$REPO_ROOT/nvim/.config/nvim/init.lua" ] ||
     fail 'rollback changed the original managed Neovim link'
-  [ ! -e "$home/.config/nvim/.neoconf.json" ] &&
-    [ ! -L "$home/.config/nvim/.neoconf.json" ] ||
+  if [ -e "$home/.config/nvim/.neoconf.json" ] ||
+    [ -L "$home/.config/nvim/.neoconf.json" ]
+  then
     fail 'rollback left the added partially managed Neovim link'
+  fi
   assert_equals 'keep history' "$(cat "$home/.config/herdr/history.db")" \
     'rollback changed unrelated Herdr state'
 }
@@ -623,10 +629,12 @@ test_real_stow_smoke_validates_package_layout_and_no_folding() {
     stow --no-folding --target="$home" zsh nvim herdr
   )
 
-  [ -d "$home/.config" ] && [ ! -L "$home/.config" ] ||
+  if [ ! -d "$home/.config" ] || [ -L "$home/.config" ]; then
     fail 'real Stow folded the shared .config directory'
-  [ -d "$home/.config/nvim" ] && [ ! -L "$home/.config/nvim" ] ||
+  fi
+  if [ ! -d "$home/.config/nvim" ] || [ -L "$home/.config/nvim" ]; then
     fail 'real Stow folded the Neovim package directory'
+  fi
   for linked_path in \
     .zshrc \
     .zprofile \
