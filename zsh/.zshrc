@@ -1,17 +1,9 @@
-# Oh My Zsh is optional, so retain a usable shell when it is not installed.
-export ZSH="${ZSH:-$HOME/.oh-my-zsh}"
-export ZSH_CUSTOM="${ZSH_CUSTOM:-$ZSH/custom}"
-# Do not let an inherited Oh My Zsh theme select a fallback prompt.
-unset ZSH_THEME
-export ZLE_RPROMPT_INDENT=0
-
 # Keep history at a useful size without relying on a machine-specific path.
 HISTFILE="${ZDOTDIR:-$HOME}/.zsh_history"
 HISTSIZE=50000
 SAVEHIST=50000
 
-# Static completions are installed separately; expose them before Oh My Zsh
-# initializes completion.
+# Static completions are published as one atomic release by provisioning.
 typeset -U fpath
 if [[ ${XDG_DATA_HOME:-} == /* ]]; then
   _dotfiles_data_home=$XDG_DATA_HOME
@@ -21,21 +13,34 @@ fi
 fpath=("$_dotfiles_data_home/zsh/site-functions/.dotfiles-completions-current" $fpath)
 unset _dotfiles_data_home
 
-# Enable only plugins that are available. Custom plugins use the conventional
-# Oh My Zsh locations under $ZSH_CUSTOM/plugins.
-plugins=(git)
-if [[ -r "$ZSH_CUSTOM/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh" ]]; then
-  plugins+=(zsh-autosuggestions)
-fi
-if (( $+commands[fzf] )) && [[ -d "$ZSH/plugins/fzf" ]]; then
-  plugins+=(fzf)
-fi
+# Native Zsh completion also discovers generated Herdr, UV, and UVX files.
+autoload -Uz compinit
+compinit -i -d "${ZDOTDIR:-$HOME}/.zcompdump"
 
-if [[ -r "$ZSH/oh-my-zsh.sh" ]]; then
-  source "$ZSH/oh-my-zsh.sh"
-elif [[ -r "$ZSH_CUSTOM/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh" ]]; then
-  source "$ZSH_CUSTOM/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh"
-fi
+_dotfiles_source_plugin() {
+  local plugin_name=$1
+  local script_name=$2
+  local share_dir
+  local plugin_path
+  local -a plugin_share_dirs
+
+  plugin_share_dirs=()
+  [[ ${HOMEBREW_PREFIX:-} == /* ]] &&
+    plugin_share_dirs+=("$HOMEBREW_PREFIX/share")
+  plugin_share_dirs+=(/opt/homebrew/share /usr/local/share /usr/share)
+
+  for share_dir in "${plugin_share_dirs[@]}"; do
+    plugin_path="$share_dir/$plugin_name/$script_name"
+    if [[ -r $plugin_path ]]; then
+      source "$plugin_path"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Autosuggestions must be active before machine-local ZLE customizations.
+_dotfiles_source_plugin zsh-autosuggestions zsh-autosuggestions.zsh || true
 
 export EDITOR='nvim'
 export VISUAL='nvim'
@@ -56,16 +61,73 @@ if (( $+commands[herdr] )); then
 fi
 alias nv='nvim'
 
-# Machine-local customizations are deliberately untracked.
+alias gst='git status'
+alias gt='git tree'
+alias ga='git add'
+alias gl='git pull'
+alias gc='git commit --verbose'
+alias gf='git fetch'
+alias gco='git checkout'
+alias grhh='git reset --hard'
+alias gp='git push'
+alias gd='git diff'
+
+_dotfiles_init_fzf_fallback() {
+  local script_root
+  local -a fzf_script_roots
+
+  fzf_script_roots=()
+  [[ ${HOMEBREW_PREFIX:-} == /* ]] &&
+    fzf_script_roots+=("$HOMEBREW_PREFIX/opt/fzf/shell")
+  fzf_script_roots+=(
+    /opt/homebrew/opt/fzf/shell
+    /usr/local/opt/fzf/shell
+    /usr/share/doc/fzf/examples
+    /usr/share/fzf/shell
+    /usr/share/fzf
+  )
+
+  for script_root in "${fzf_script_roots[@]}"; do
+    if [[ -r "$script_root/key-bindings.zsh" &&
+          -r "$script_root/completion.zsh" ]]; then
+      source "$script_root/key-bindings.zsh" || return
+      source "$script_root/completion.zsh" || return
+      return 0
+    fi
+  done
+
+  return 0
+}
+
+_dotfiles_init_fzf() {
+  local fzf_init
+  (( $+commands[fzf] )) || return 0
+
+  if fzf_init=$(fzf --zsh 2>/dev/null); then
+    eval "$fzf_init"
+  else
+    _dotfiles_init_fzf_fallback
+  fi
+}
+
+_dotfiles_init_fzf
+
+# Machine-local customizations are deliberately untracked and can override
+# any repository-provided aliases or integrations above.
 [[ -r "$HOME/.zshrc.local" ]] && source "$HOME/.zshrc.local"
 
-# Starship owns the prompt when installed. Without it, keep the native Zsh
-# prompt rather than selecting a second theme or replacing an existing prompt.
+# Starship owns the prompt when installed. Without it, native Zsh remains in
+# charge and no fallback theme is selected.
+export ZLE_RPROMPT_INDENT=0
 if (( $+commands[starship] )); then
   eval "$(starship init zsh)"
 fi
 
-# Load syntax highlighting last so it can wrap every line-editor widget.
-if [[ -r "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" ]]; then
-  source "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
-fi
+# Syntax highlighting must be loaded last so it can wrap every line-editor
+# widget and any widgets added by local customization or Starship.
+_dotfiles_source_plugin zsh-syntax-highlighting zsh-syntax-highlighting.zsh || true
+
+# Reassert the prompt anchor contract after the final plugin has loaded.
+ZLE_RPROMPT_INDENT=0
+
+unset -f _dotfiles_source_plugin _dotfiles_init_fzf_fallback _dotfiles_init_fzf

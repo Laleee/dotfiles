@@ -16,7 +16,7 @@ DOTFILES_TAR_CMD=${DOTFILES_TAR_CMD:-tar}
 DOTFILES_NPM_CMD=${DOTFILES_NPM_CMD:-npm}
 DOTFILES_OS_RELEASE_FILE=${DOTFILES_OS_RELEASE_FILE:-/etc/os-release}
 DOTFILES_NEOVIM_RELEASE_BASE_URL=${DOTFILES_NEOVIM_RELEASE_BASE_URL:-https://github.com/neovim/neovim/releases/download/stable}
-DOTFILES_APT_PACKAGES='ca-certificates curl git stow zsh fzf zoxide fd-find ripgrep nodejs npm build-essential graphviz shellcheck tar xz-utils'
+DOTFILES_APT_PACKAGES='ca-certificates curl git stow zsh zsh-autosuggestions zsh-syntax-highlighting fzf zoxide fd-find ripgrep nodejs npm build-essential graphviz shellcheck tar xz-utils'
 
 require_debian_family() {
   local distribution_id

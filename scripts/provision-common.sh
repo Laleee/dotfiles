@@ -4,14 +4,10 @@ set -eu
 set -o pipefail
 
 DOTFILES_CURL_CMD=${DOTFILES_CURL_CMD:-curl}
-DOTFILES_GIT_CMD=${DOTFILES_GIT_CMD:-git}
 DOTFILES_MV_CMD=${DOTFILES_MV_CMD:-mv}
 DOTFILES_UV_INSTALL_URL=${DOTFILES_UV_INSTALL_URL:-https://astral.sh/uv/install.sh}
 DOTFILES_HERDR_INSTALL_URL=${DOTFILES_HERDR_INSTALL_URL:-https://herdr.dev/install.sh}
 DOTFILES_STARSHIP_INSTALL_URL=${DOTFILES_STARSHIP_INSTALL_URL:-https://starship.rs/install.sh}
-DOTFILES_OMZ_URL=${DOTFILES_OMZ_URL:-https://github.com/ohmyzsh/ohmyzsh.git}
-DOTFILES_AUTOSUGGESTIONS_URL=${DOTFILES_AUTOSUGGESTIONS_URL:-https://github.com/zsh-users/zsh-autosuggestions.git}
-DOTFILES_SYNTAX_HIGHLIGHTING_URL=${DOTFILES_SYNTAX_HIGHLIGHTING_URL:-https://github.com/zsh-users/zsh-syntax-highlighting.git}
 
 dotfiles_error() {
   printf 'dotfiles: %s\n' "$*" >&2
@@ -169,31 +165,10 @@ install_starship_if_missing() {
   fi
 }
 
-clone_if_missing() {
-  local repository_url=$1
-  local destination=$2
-  if [ -e "$destination" ]; then
-    return 0
-  fi
-  mkdir -p "$(dirname -- "$destination")"
-  "$DOTFILES_GIT_CMD" clone --depth 1 "$repository_url" "$destination"
-}
-
-install_shell_dependencies() {
-  local omz_dir=${ZSH:-$HOME/.oh-my-zsh}
-  local custom_dir=${ZSH_CUSTOM:-$omz_dir/custom}
-  clone_if_missing "$DOTFILES_OMZ_URL" "$omz_dir"
-  clone_if_missing "$DOTFILES_AUTOSUGGESTIONS_URL" \
-    "$custom_dir/plugins/zsh-autosuggestions"
-  clone_if_missing "$DOTFILES_SYNTAX_HIGHLIGHTING_URL" \
-    "$custom_dir/plugins/zsh-syntax-highlighting"
-}
-
 provision_common() {
   install_uv_if_missing
   install_herdr_if_missing
   install_starship_if_missing
-  install_shell_dependencies
 }
 
 dotfiles_atomic_replace() {
@@ -285,9 +260,6 @@ regenerate_completions() (
 diagnose_common() {
   local diagnostic_status=0
   local tool_name
-  local omz_dir
-  local custom_dir
-  local dependency_path
   local data_home
   local completion_dir
   local completion_name
@@ -297,19 +269,6 @@ diagnose_common() {
   for tool_name in uv uvx herdr starship; do
     if ! dotfiles_tool_path "$tool_name" >/dev/null 2>&1; then
       dotfiles_error "missing command: $tool_name"
-      diagnostic_status=1
-    fi
-  done
-
-  omz_dir=${ZSH:-$HOME/.oh-my-zsh}
-  custom_dir=${ZSH_CUSTOM:-$omz_dir/custom}
-  for dependency_path in \
-    "$omz_dir/oh-my-zsh.sh" \
-    "$custom_dir/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh" \
-    "$custom_dir/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
-  do
-    if [ ! -r "$dependency_path" ]; then
-      dotfiles_error "missing shell dependency: $dependency_path"
       diagnostic_status=1
     fi
   done

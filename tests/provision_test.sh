@@ -91,24 +91,7 @@ fi
 INSTALLER
 EOF
 
-  cat >"$fake_bin/git" <<'EOF'
-#!/bin/sh
-set -eu
-[ "$1" = clone ]
-shift
-if [ "${1:-}" = --depth ]; then shift 2; fi
-url=$1
-destination=$2
-[ ! -e "$destination" ] || exit 92
-mkdir -p "$destination"
-case $url in
-  *ohmyzsh*) : >"$destination/oh-my-zsh.sh" ;;
-  *zsh-autosuggestions*) : >"$destination/zsh-autosuggestions.zsh" ;;
-  *zsh-syntax-highlighting*) : >"$destination/zsh-syntax-highlighting.zsh" ;;
-  *) exit 64 ;;
-esac
-EOF
-  chmod +x "$fake_bin/curl" "$fake_bin/git"
+  chmod +x "$fake_bin/curl"
 }
 
 test_common_provisioning_is_idempotent_and_regenerates_completions() {
@@ -117,19 +100,14 @@ test_common_provisioning_is_idempotent_and_regenerates_completions() {
   mkdir -p "$home"
   make_fake_user_tools "$fake_bin"
 
-  HOME="$home" ZSH="$home/.oh-my-zsh" \
-    ZSH_CUSTOM="$home/.oh-my-zsh/custom" PATH="$fake_bin:/usr/bin:/bin" \
+  HOME="$home" PATH="$fake_bin:/usr/bin:/bin" \
     DOTFILES_UV_INSTALL_URL=https://example.test/uv \
     DOTFILES_HERDR_INSTALL_URL=https://example.test/herdr \
     bash "$REPO_ROOT/scripts/provision-common.sh"
 
   assert_equals 1 "$(cat "$home/.uv-no-modify-path")" \
     'uv installer must be prevented from editing profiles'
-  [ -r "$home/.oh-my-zsh/oh-my-zsh.sh" ] || fail 'Oh My Zsh was not cloned'
-  [ -r "$home/.oh-my-zsh/custom/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh" ] ||
-    fail 'zsh-autosuggestions was not cloned to the conventional OMZ path'
-  [ -r "$home/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" ] ||
-    fail 'zsh-syntax-highlighting was not cloned to the conventional OMZ path'
+  [ ! -e "$home/.oh-my-zsh" ] || fail 'common provisioning unexpectedly cloned Oh My Zsh'
 
   completion_root="$home/.local/share/zsh/site-functions"
   completion_dir="$completion_root/.dotfiles-completions-current"
@@ -138,12 +116,45 @@ test_common_provisioning_is_idempotent_and_regenerates_completions() {
   assert_file_contains "$completion_dir/_uvx" 'uvx completion'
 
   printf 'stale\n' >"$completion_dir/_uv"
-  HOME="$home" ZSH="$home/.oh-my-zsh" \
-    ZSH_CUSTOM="$home/.oh-my-zsh/custom" PATH="$fake_bin:/usr/bin:/bin" \
+  HOME="$home" PATH="$fake_bin:/usr/bin:/bin" \
     DOTFILES_UV_INSTALL_URL=https://example.test/uv \
     DOTFILES_HERDR_INSTALL_URL=https://example.test/herdr \
     bash "$REPO_ROOT/scripts/provision-common.sh"
   assert_file_contains "$completion_dir/_uv" 'uv completion'
+}
+
+test_common_provisioning_does_not_clone_omz_or_plugins() {
+  home="$TEST_TMP_ROOT/no-omz-home"
+  bin="$TEST_TMP_ROOT/no-omz-bin"
+  mkdir -p "$home" "$bin"
+  cat >"$bin/git" <<'EOF'
+#!/bin/sh
+printf '%s\n' "$*" >>"$DOTFILES_TEST_GIT_CALLS"
+exit 99
+EOF
+  chmod +x "$bin/git"
+  set +e
+  HOME="$home" PATH="$bin:/usr/bin:/bin" DOTFILES_TEST_GIT_CALLS="$TEST_TMP_ROOT/git-calls" \
+    bash -c '
+      . "$1/scripts/provision-common.sh"
+      install_uv_if_missing() { :; }
+      install_herdr_if_missing() { :; }
+      install_starship_if_missing() { :; }
+      regenerate_completions() { :; }
+      provision_common
+    ' shell "$REPO_ROOT"
+  status=$?
+  set -e
+  assert_equals 0 "$status" 'shell dependency provisioning failed without package manager paths'
+  [ ! -e "$TEST_TMP_ROOT/git-calls" ] || fail 'shell dependency provisioning invoked git clone'
+  [ ! -e "$home/.oh-my-zsh" ] || fail 'shell dependency provisioning created an OMZ directory'
+}
+
+test_brewfile_and_debian_packages_include_zsh_plugins() {
+  assert_file_contains "$REPO_ROOT/Brewfile" 'brew "zsh-autosuggestions"'
+  assert_file_contains "$REPO_ROOT/Brewfile" 'brew "zsh-syntax-highlighting"'
+  assert_file_contains "$REPO_ROOT/scripts/provision-debian.sh" 'zsh-autosuggestions'
+  assert_file_contains "$REPO_ROOT/scripts/provision-debian.sh" 'zsh-syntax-highlighting'
 }
 
 test_relative_xdg_data_home_publishes_completions_inside_home() {
@@ -381,8 +392,7 @@ test_zsh_uses_atomic_completion_directory() {
   home="$TEST_TMP_ROOT/zsh-fpath-home"
   mkdir -p "$home"
   set +e
-  HOME="$home" XDG_DATA_HOME="$home/.local/share" ZSH="$home/missing-oh-my-zsh" \
-    ZSH_CUSTOM="$home/missing-oh-my-zsh/custom" zsh -dfc \
+  HOME="$home" XDG_DATA_HOME="$home/.local/share" zsh -dfc \
     'source "$1"; [[ ${fpath[1]} == "$XDG_DATA_HOME/zsh/site-functions/.dotfiles-completions-current" ]]' \
     zsh "$REPO_ROOT/zsh/.zshrc"
   status=$?
@@ -394,8 +404,7 @@ test_zsh_falls_back_from_relative_xdg_data_home() {
   home="$TEST_TMP_ROOT/zsh-relative-data-home"
   mkdir -p "$home"
   set +e
-  HOME="$home" XDG_DATA_HOME=relative-data ZSH="$home/missing-oh-my-zsh" \
-    ZSH_CUSTOM="$home/missing-oh-my-zsh/custom" zsh -dfc \
+  HOME="$home" XDG_DATA_HOME=relative-data zsh -dfc \
     'source "$1"; [[ ${fpath[1]} == "$HOME/.local/share/zsh/site-functions/.dotfiles-completions-current" ]]' \
     zsh "$REPO_ROOT/zsh/.zshrc"
   status=$?
@@ -425,8 +434,7 @@ EOF
   ln -s "${release##*/}" "$pointer"
 
   set +e
-  HOME="$home" XDG_DATA_HOME="$home/.local/share" ZSH="$home/missing-oh-my-zsh" \
-    ZSH_CUSTOM="$home/missing-oh-my-zsh/custom" zsh -dfc '
+  HOME="$home" XDG_DATA_HOME="$home/.local/share" zsh -dfc '
       source "$1"
       autoload -Uz compinit
       compinit -D
@@ -439,6 +447,272 @@ EOF
   set -e
   [ "$status" -eq 0 ] ||
     fail 'Zsh could not discover generated completions through the atomic pointer'
+}
+
+test_zsh_defines_the_documented_git_aliases() {
+  home="$TEST_TMP_ROOT/zsh-alias-home"
+  mkdir -p "$home"
+  set +e
+  HOME="$home" zsh -dfc '
+      source "$1"
+      [[ ${aliases[gst]} == "git status" ]] || exit 1
+      [[ ${aliases[gt]} == "git tree" ]] || exit 1
+      [[ ${aliases[ga]} == "git add" ]] || exit 1
+      [[ ${aliases[gl]} == "git pull" ]] || exit 1
+      [[ ${aliases[gc]} == "git commit --verbose" ]] || exit 1
+      [[ ${aliases[gf]} == "git fetch" ]] || exit 1
+      [[ ${aliases[gco]} == "git checkout" ]] || exit 1
+      [[ ${aliases[grhh]} == "git reset --hard" ]] || exit 1
+      [[ ${aliases[gp]} == "git push" ]] || exit 1
+      [[ ${aliases[gd]} == "git diff" ]] || exit 1
+    ' zsh "$REPO_ROOT/zsh/.zshrc"
+  status=$?
+  set -e
+  [ "$status" -eq 0 ] || fail 'Zsh Git aliases do not match the documented contract'
+}
+
+test_zsh_local_config_can_override_git_aliases() {
+  home="$TEST_TMP_ROOT/zsh-local-alias-home"
+  mkdir -p "$home"
+  cat >"$home/.zshrc.local" <<'EOF'
+alias gst='custom status'
+alias gt='custom tree'
+EOF
+  set +e
+  HOME="$home" zsh -dfc '
+      source "$1"
+      [[ ${aliases[gst]} == "custom status" ]] || exit 1
+      [[ ${aliases[gt]} == "custom tree" ]] || exit 1
+    ' zsh "$REPO_ROOT/zsh/.zshrc"
+  status=$?
+  set -e
+  [ "$status" -eq 0 ] || fail '.zshrc.local could not override repository Git aliases'
+}
+
+test_zsh_discovers_completions_after_native_compinit() {
+  home="$TEST_TMP_ROOT/zsh-native-compinit-home"
+  completion_root="$home/.local/share/zsh/site-functions"
+  release="$completion_root/.dotfiles-completions-release.native"
+  mkdir -p "$release"
+  for name in herdr uv uvx; do
+    cat >"$release/_$name" <<EOF
+#compdef $name
+_$name() { _message '$name generated completion'; }
+EOF
+  done
+  ln -s "${release##*/}" "$completion_root/.dotfiles-completions-current"
+  set +e
+  HOME="$home" XDG_DATA_HOME="$home/.local/share" zsh -dfc '
+      source "$1"
+      (( $+functions[_herdr] )) || exit 1
+      (( $+functions[_uv] )) || exit 1
+      (( $+functions[_uvx] )) || exit 1
+    ' zsh "$REPO_ROOT/zsh/.zshrc"
+  status=$?
+  set -e
+  [ "$status" -eq 0 ] || fail 'generated completions were not loaded by native compinit'
+}
+
+test_zsh_loads_plugins_in_required_order_from_homebrew_share() {
+  home="$TEST_TMP_ROOT/zsh-plugin-order-home"
+  prefix="$home/homebrew"
+  mkdir -p "$home" "$prefix/share/zsh-autosuggestions" "$prefix/share/zsh-syntax-highlighting"
+  cat >"$prefix/share/zsh-autosuggestions/zsh-autosuggestions.zsh" <<'EOF'
+printf 'autosuggestions\n' >> "$DOTFILES_TEST_PLUGIN_ORDER"
+EOF
+  cat >"$prefix/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" <<'EOF'
+printf 'syntax-highlighting\n' >> "$DOTFILES_TEST_PLUGIN_ORDER"
+EOF
+  cat >"$home/.zshrc.local" <<'EOF'
+printf 'local\n' >> "$DOTFILES_TEST_PLUGIN_ORDER"
+EOF
+  set +e
+  HOME="$home" HOMEBREW_PREFIX="$prefix" DOTFILES_TEST_PLUGIN_ORDER="$home/order" \
+    zsh -dfc \
+    'source "$1"' zsh "$REPO_ROOT/zsh/.zshrc"
+  status=$?
+  set -e
+  [ "$status" -eq 0 ] || fail 'Homebrew-share shell plugins could not be loaded'
+  assert_equals 'autosuggestions
+local
+syntax-highlighting' "$(cat "$home/order")" \
+    'shell plugin load order is not autosuggestions, local, syntax highlighting'
+}
+
+test_zsh_loads_plugins_from_usr_share_fallback() {
+  if [ ! -r /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh ] ||
+    [ ! -r /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ] ||
+    [ -r /opt/homebrew/share/zsh-autosuggestions/zsh-autosuggestions.zsh ] ||
+    [ -r /opt/homebrew/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ] ||
+    [ -r /usr/local/share/zsh-autosuggestions/zsh-autosuggestions.zsh ] ||
+    [ -r /usr/local/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh ]
+  then
+    return 0
+  fi
+
+  home="$TEST_TMP_ROOT/zsh-usr-share-home"
+  mkdir -p "$home"
+  set +e
+  HOME="$home" zsh -dfic '
+      source "$1"
+      (( $+functions[_zsh_autosuggest_start] )) || exit 1
+      (( $+functions[_zsh_highlight] )) || exit 1
+    ' zsh "$REPO_ROOT/zsh/.zshrc"
+  status=$?
+  set -e
+  [ "$status" -eq 0 ] || fail 'plugins were not loaded from the actual /usr/share layout'
+}
+
+test_zsh_ignores_relative_homebrew_prefix_for_shell_code() {
+  home="$TEST_TMP_ROOT/zsh-relative-homebrew-home"
+  work="$TEST_TMP_ROOT/zsh-relative-homebrew-work"
+  marker="$TEST_TMP_ROOT/zsh-relative-homebrew-sourced"
+  mkdir -p "$home" "$work/bin" \
+    "$work/share/zsh-autosuggestions" \
+    "$work/share/zsh-syntax-highlighting" \
+    "$work/opt/fzf/shell"
+  for script in \
+    "$work/share/zsh-autosuggestions/zsh-autosuggestions.zsh" \
+    "$work/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" \
+    "$work/opt/fzf/shell/key-bindings.zsh" \
+    "$work/opt/fzf/shell/completion.zsh"
+  do
+    cat >"$script" <<'EOF'
+print -r -- sourced >> "$DOTFILES_TEST_RELATIVE_PREFIX_MARKER"
+EOF
+  done
+  cat >"$work/bin/fzf" <<'EOF'
+#!/bin/sh
+[ "$1" = --zsh ] || exit 64
+exit 1
+EOF
+  chmod +x "$work/bin/fzf"
+
+  set +e
+  (
+    cd "$work" || exit 1
+    HOME="$home" HOMEBREW_PREFIX=. \
+      DOTFILES_TEST_RELATIVE_PREFIX_MARKER="$marker" \
+      PATH="$work/bin:/usr/bin:/bin" \
+      zsh -dfc 'source "$1"' zsh "$REPO_ROOT/zsh/.zshrc" \
+        2>"$home/stderr"
+  )
+  status=$?
+  set -e
+  if [ "$status" -ne 0 ]; then
+    cat "$home/stderr" >&2
+    fail 'Zsh failed while rejecting a relative Homebrew prefix'
+  fi
+  [ ! -e "$marker" ] || fail 'relative HOMEBREW_PREFIX allowed shell code from the working directory'
+}
+
+test_fzf_modern_and_legacy_shell_integrations_preserve_bindings() {
+  home="$TEST_TMP_ROOT/zsh-fzf-home"
+  bin="$TEST_TMP_ROOT/zsh-fzf-bin"
+  mkdir -p "$home" "$bin"
+  cat >"$bin/fzf" <<'EOF'
+#!/bin/sh
+[ "$1" = --zsh ] || exit 64
+printf '%s\n' \
+  'function fzf-history-widget { :; }' \
+  'function fzf-file-widget { :; }' \
+  'function fzf-cd-widget { :; }' \
+  'function fzf-completion { :; }' \
+  'bindkey "^R" fzf-history-widget' \
+  'bindkey "^T" fzf-file-widget' \
+  'bindkey "^[c" fzf-cd-widget' \
+  'bindkey "^I" fzf-completion'
+EOF
+  chmod +x "$bin/fzf"
+  set +e
+  HOME="$home" PATH="$bin:/usr/bin:/bin" zsh -dfic \
+    'source "$1"; [[ $(bindkey "^R") == *fzf-history-widget* ]] && [[ $(bindkey "^T") == *fzf-file-widget* ]] && [[ $(bindkey "^[c") == *fzf-cd-widget* ]] && [[ $(bindkey "^I") == *fzf-completion* ]] && (( $+functions[fzf-completion] ))' \
+    zsh "$REPO_ROOT/zsh/.zshrc"
+  modern_status=$?
+  set -e
+  [ "$modern_status" -eq 0 ] || fail 'modern fzf --zsh integration did not preserve key bindings'
+}
+
+test_fzf_legacy_shell_scripts_preserve_key_bindings_and_completion() {
+  home="$TEST_TMP_ROOT/zsh-fzf-legacy-home"
+  prefix="$home/fzf-prefix"
+  share="$prefix/opt/fzf/shell"
+  mkdir -p "$home" "$share" "$home/bin"
+  cat >"$home/bin/fzf" <<'EOF'
+#!/bin/sh
+[ "$1" = --zsh ] || exit 64
+exit 1
+EOF
+  chmod +x "$home/bin/fzf"
+  cat >"$share/key-bindings.zsh" <<'EOF'
+function fzf-history-widget { :; }
+function fzf-file-widget { :; }
+function fzf-cd-widget { :; }
+bindkey '^R' fzf-history-widget
+bindkey '^T' fzf-file-widget
+bindkey '^[c' fzf-cd-widget
+EOF
+  cat >"$share/completion.zsh" <<'EOF'
+function fzf-completion { :; }
+bindkey '^I' fzf-completion
+EOF
+  set +e
+  HOME="$home" HOMEBREW_PREFIX="$prefix" PATH="$home/bin:/usr/bin:/bin" \
+    zsh -dfic \
+    'source "$1"; [[ $(bindkey "^R") == *fzf-history-widget* ]] && [[ $(bindkey "^T") == *fzf-file-widget* ]] && [[ $(bindkey "^[c") == *fzf-cd-widget* ]] && [[ $(bindkey "^I") == *fzf-completion* ]] && (( $+functions[fzf-completion] ))' \
+    zsh "$REPO_ROOT/zsh/.zshrc"
+  status=$?
+  set -e
+  [ "$status" -eq 0 ] || fail 'legacy fzf shell scripts did not preserve bindings and completion'
+}
+
+test_fzf_legacy_fallback_uses_one_complete_installation() {
+  packaged_root=
+  for candidate in \
+    /opt/homebrew/opt/fzf/shell \
+    /usr/local/opt/fzf/shell \
+    /usr/share/doc/fzf/examples \
+    /usr/share/fzf/shell \
+    /usr/share/fzf
+  do
+    if [ -r "$candidate/key-bindings.zsh" ] && [ -r "$candidate/completion.zsh" ]; then
+      packaged_root=$candidate
+      break
+    fi
+  done
+  [ -n "$packaged_root" ] || return 0
+
+  home="$TEST_TMP_ROOT/zsh-fzf-single-root-home"
+  prefix="$home/fzf-prefix"
+  incomplete_root="$prefix/opt/fzf/shell"
+  marker="$home/incomplete-root-sourced"
+  mkdir -p "$home/bin" "$incomplete_root"
+  cat >"$home/bin/fzf" <<'EOF'
+#!/bin/sh
+[ "$1" = --zsh ] || exit 64
+exit 1
+EOF
+  chmod +x "$home/bin/fzf"
+  cat >"$incomplete_root/key-bindings.zsh" <<'EOF'
+print -r -- sourced > "$DOTFILES_TEST_INCOMPLETE_FZF_MARKER"
+EOF
+
+  set +e
+  HOME="$home" HOMEBREW_PREFIX="$prefix" \
+    DOTFILES_TEST_INCOMPLETE_FZF_MARKER="$marker" \
+    PATH="$home/bin:/usr/bin:/bin" \
+    zsh -dfic '
+      source "$1"
+      (( $+functions[fzf-history-widget] )) || exit 1
+      (( $+functions[fzf-completion] )) || exit 1
+    ' zsh "$REPO_ROOT/zsh/.zshrc" 2>"$home/stderr"
+  status=$?
+  set -e
+  if [ "$status" -ne 0 ]; then
+    cat "$home/stderr" >&2
+    fail 'legacy fzf fallback did not load a complete packaged integration'
+  fi
+  [ ! -e "$marker" ] || fail 'legacy fzf fallback mixed scripts from different installations'
 }
 
 test_zsh_initializes_starship_without_omz_theme_fallback() {
@@ -454,11 +728,8 @@ EOF
   chmod +x "$bin/starship"
 
   set +e
-  HOME="$home" PATH="$bin:/usr/bin:/bin" ZSH_THEME=robbyrussell \
-    ZSH="$home/missing-oh-my-zsh" \
-    ZSH_CUSTOM="$home/missing-oh-my-zsh/custom" zsh -dfc '
+  HOME="$home" PATH="$bin:/usr/bin:/bin" zsh -dfc '
       source "$1"
-      [[ -z ${ZSH_THEME:-} ]] || exit 1
       [[ "$ZLE_RPROMPT_INDENT" = 0 ]] || exit 1
       [[ "$STARSHIP_TEST_INIT" = 1 ]] || exit 1
       [[ "$PROMPT" = starship-test ]] || exit 1
@@ -561,11 +832,11 @@ test_common_diagnostics_reject_outdated_neovim_with_manual_guidance() {
   home="$TEST_TMP_ROOT/outdated-nvim-home"
   bin="$TEST_TMP_ROOT/outdated-nvim-bin"
   completion_dir="$home/.local/share/zsh/site-functions/.dotfiles-completions-current"
-  mkdir -p "$bin" "$home/.oh-my-zsh/custom/plugins/zsh-autosuggestions" \
-    "$home/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting" "$completion_dir"
-  : >"$home/.oh-my-zsh/oh-my-zsh.sh"
-  : >"$home/.oh-my-zsh/custom/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh"
-  : >"$home/.oh-my-zsh/custom/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
+  prefix="$home/homebrew"
+  mkdir -p "$bin" "$prefix/share/zsh-autosuggestions" \
+    "$prefix/share/zsh-syntax-highlighting" "$completion_dir"
+  : >"$prefix/share/zsh-autosuggestions/zsh-autosuggestions.zsh"
+  : >"$prefix/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
   for completion_name in _herdr _uv _uvx; do
     printf 'completion\n' >"$completion_dir/$completion_name"
   done
@@ -582,7 +853,7 @@ EOF
   chmod +x "$bin/uv" "$bin/uvx" "$bin/herdr" "$bin/nvim"
 
   set +e
-  diagnostic=$(HOME="$home" PATH="$bin:/usr/bin:/bin" \
+  diagnostic=$(HOME="$home" HOMEBREW_PREFIX="$prefix" PATH="$bin:/usr/bin:/bin" \
     bash -c '. "$1/scripts/provision-common.sh"; diagnose_common' \
     shell "$REPO_ROOT" 2>&1)
   status=$?
@@ -598,12 +869,12 @@ EOF
 printf 'NVIM v0.11.2\n'
 EOF
   chmod +x "$bin/nvim"
-  HOME="$home" PATH="$bin:/usr/bin:/bin" bash -c \
+  HOME="$home" HOMEBREW_PREFIX="$prefix" PATH="$bin:/usr/bin:/bin" bash -c \
     '. "$1/scripts/provision-common.sh"; diagnose_common' shell "$REPO_ROOT"
 
   rm "$bin/starship"
   set +e
-  diagnostic=$(HOME="$home" PATH="$bin:/usr/bin:/bin" \
+  diagnostic=$(HOME="$home" HOMEBREW_PREFIX="$prefix" PATH="$bin:/usr/bin:/bin" \
     bash -c '. "$1/scripts/provision-common.sh"; diagnose_common' \
     shell "$REPO_ROOT" 2>&1)
   status=$?
@@ -691,8 +962,7 @@ test_macos_packages_require_brew_and_never_upgrade() {
   mkdir -p "$home" "$bin" "$receipts"
 
   set +e
-  HOME="$home" ZSH="$home/.oh-my-zsh" \
-    ZSH_CUSTOM="$home/.oh-my-zsh/custom" PATH="/usr/bin:/bin" bash -c \
+  HOME="$home" PATH="/usr/bin:/bin" bash -c \
     '. "$1/scripts/provision-macos.sh"; provision_macos_packages' shell "$REPO_ROOT" \
     2>/dev/null
   status=$?
@@ -724,7 +994,7 @@ EOF
     '. "$1/scripts/provision-macos.sh"; provision_macos_packages' shell "$REPO_ROOT"
 
   assert_equals \
-    'git neovim stow fzf zoxide fd ripgrep tree-sitter-cli node lazygit graphviz shellcheck starship' \
+    'git neovim stow fzf zsh-autosuggestions zsh-syntax-highlighting zoxide fd ripgrep tree-sitter-cli node lazygit graphviz shellcheck starship' \
     "$(tr '\n' ' ' <"$receipts/formulas" | sed 's/ $//')" \
     'Brewfile formulas differ from the required portable toolset'
 }
@@ -1089,7 +1359,7 @@ EOF
   assert_equals "$bin/fdfind" "$(readlink "$home/.local/bin/fd")" \
     'fd compatibility link points at the wrong executable'
   assert_equals \
-    'ca-certificates curl git stow zsh fzf zoxide fd-find ripgrep nodejs npm build-essential graphviz shellcheck tar xz-utils' \
+    'ca-certificates curl git stow zsh zsh-autosuggestions zsh-syntax-highlighting fzf zoxide fd-find ripgrep nodejs npm build-essential graphviz shellcheck tar xz-utils' \
     "$(cat "$receipts/apt-packages")" 'apt package set differs from the required dependencies'
 
   before=$(stat -c %Y "$home/.local/opt/nvim" 2>/dev/null || stat -f %m "$home/.local/opt/nvim")
@@ -1146,17 +1416,21 @@ EOF
     "$url" 'wrong arm64 Neovim archive URL'
 
   set +e
-  HOME="$home" ZSH="$home/.oh-my-zsh" \
-    ZSH_CUSTOM="$home/.oh-my-zsh/custom" PATH="/usr/bin:/bin" bash -c \
-    '. "$1/scripts/provision-common.sh"; diagnose_common >/dev/null' shell "$REPO_ROOT" \
-    2>/dev/null
+  diagnostic=$(HOME="$home" PATH="/usr/bin:/bin" bash -c \
+    '. "$1/scripts/provision-common.sh"; diagnose_common' shell "$REPO_ROOT" 2>&1)
   status=$?
   set -e
   [ "$status" -ne 0 ] || fail 'common diagnostics reported a missing installation as healthy'
+  case $diagnostic in
+    *oh-my-zsh*|*'missing shell dependency'*)
+      fail 'common diagnostics still checks removed Oh My Zsh dependencies' ;;
+  esac
   [ -z "$(find "$home" -mindepth 1 -print -quit)" ] || fail 'diagnostics mutated HOME'
 }
 
 test_common_provisioning_is_idempotent_and_regenerates_completions
+test_common_provisioning_does_not_clone_omz_or_plugins
+test_brewfile_and_debian_packages_include_zsh_plugins
 test_relative_xdg_data_home_publishes_completions_inside_home
 test_completion_failure_preserves_existing_set
 test_completion_publication_failure_preserves_existing_set
@@ -1165,6 +1439,15 @@ test_first_completion_publication_has_one_atomic_entry
 test_zsh_uses_atomic_completion_directory
 test_zsh_falls_back_from_relative_xdg_data_home
 test_zsh_discovers_generated_completions_through_the_atomic_pointer
+test_zsh_defines_the_documented_git_aliases
+test_zsh_local_config_can_override_git_aliases
+test_zsh_discovers_completions_after_native_compinit
+test_zsh_loads_plugins_in_required_order_from_homebrew_share
+test_zsh_loads_plugins_from_usr_share_fallback
+test_zsh_ignores_relative_homebrew_prefix_for_shell_code
+test_fzf_modern_and_legacy_shell_integrations_preserve_bindings
+test_fzf_legacy_shell_scripts_preserve_key_bindings_and_completion
+test_fzf_legacy_fallback_uses_one_complete_installation
 test_zsh_initializes_starship_without_omz_theme_fallback
 test_starship_config_is_focused_tokyo_night_two_line_prompt
 test_starship_installer_is_idempotent_and_uses_user_prefix

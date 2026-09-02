@@ -19,16 +19,16 @@ cd ~/src/dotfiles
 On macOS, install Homebrew before running the script. On Debian/Ubuntu, the
 script uses `apt-get` through `sudo` when necessary and includes `zsh` and the
 `build-essential` compiler toolchain. The script installs only missing
-dependencies, clones only missing shell dependencies, and deploys the `zsh`,
-`starship`, `nvim`, `herdr`, and `git` Stow packages to `$HOME`. It does not
-silently upgrade
-installed packages, user-local tools, or existing clones.
+dependencies, obtains Zsh plugins from the system package manager, and deploys
+the `zsh`, `starship`, `nvim`, `herdr`, and `git` Stow packages to `$HOME`. It
+does not silently upgrade installed packages or user-local tools. An existing
+`~/.oh-my-zsh` directory is left untouched.
 
 `setup.sh` is only an orchestrator: it runs a dotfile conflict preflight, calls
 the matching existing `scripts/provision-macos.sh` or
 `scripts/provision-debian.sh` provisioner, and then calls `bootstrap.sh` to
 deploy configuration. `bootstrap.sh` itself never installs packages, downloads
-tools, clones plugins, or generates completions.
+tools or generates completions.
 
 Before provisioning, setup checks all seven managed targets below. If one
 already exists but is not managed by this repository, it prints the exact path
@@ -150,10 +150,8 @@ Starship is also never upgraded automatically; update it manually through its
 package manager or by rerunning the official installer when desired.
 
 Use those commands only for installer-managed installations, not copies managed
-by Homebrew or another package manager. Existing Homebrew copies of UV, Herdr,
-or shell plugins should be cleaned up only after the Stow configuration and
-login-shell tools have been verified; cleanup is intentionally outside
-provisioning.
+by Homebrew or another package manager. Cleanup of duplicate user-local
+installations is intentionally outside provisioning.
 
 Provisioning also leaves an existing Neovim or Tree-sitter CLI installation in
 place. If `./setup.sh --check` reports an old Neovim, update it manually through
@@ -167,6 +165,28 @@ session:
 ```sh
 chsh -s "$(command -v zsh)"
 ```
+
+## Zsh integration
+
+The managed `.zshrc` uses native Zsh completion (`compinit`) and automatically
+discovers the generated `herdr`, `uv`, and `uvx` completion files. The
+`zsh-autosuggestions` and `zsh-syntax-highlighting` plugins are installed
+from Homebrew or APT and loaded from the first readable system package
+location (`$HOMEBREW_PREFIX/share`, `/opt/homebrew/share`,
+`/usr/local/share`, or `/usr/share`). Missing plugin files are skipped safely at shell startup;
+`setup.sh --check` reports missing packages through the existing package
+diagnostics.
+
+When available, current fzf releases provide key bindings and fuzzy completion
+through `fzf --zsh`. Older packaged releases use their installed
+`key-bindings.zsh` and `completion.zsh` scripts. Ctrl-R, Ctrl-T, Alt-C, and
+fuzzy completion remain enabled.
+
+Machine-local settings in `~/.zshrc.local` are sourced after autosuggestions
+and the repository aliases, so they can override them. Syntax highlighting is
+loaded last. The setup never removes an existing `~/.oh-my-zsh`; after
+verifying the native setup, you may rename that directory to a backup and
+delete the backup manually later if it is no longer needed.
 
 ## Git aliases
 
@@ -220,8 +240,7 @@ anchor stable when the right prompt is present.
 
 macOS installs Starship through the Brewfile. Debian/Ubuntu installs the
 official Starship installer into `~/.local/bin`. Existing Starship commands are
-left untouched, and no alternate Oh My Zsh theme is selected if Starship is
-missing.
+left untouched; if Starship is missing, native Zsh keeps its normal prompt.
 
 ## Upstream references
 
