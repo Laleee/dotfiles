@@ -47,6 +47,7 @@ done
 case $url in
   *uv*) tool=uv ;;
   *herdr*) tool=herdr ;;
+  *starship*) tool=starship ;;
   *) exit 64 ;;
 esac
 cat >"$output" <<INSTALLER
@@ -70,13 +71,22 @@ TOOL
 printf '#compdef uvx\nuvx completion\n'
 TOOL
   chmod +x "\$HOME/.local/bin/uv" "\$HOME/.local/bin/uvx"
-else
+elif [ "\$tool" = herdr ]; then
   cat >"\$HOME/.local/bin/herdr" <<'TOOL'
 #!/bin/sh
 [ "\$1 \$2" = "completion zsh" ] || exit 64
 printf '#compdef herdr\nherdr completion\n'
 TOOL
   chmod +x "\$HOME/.local/bin/herdr"
+else
+  [ "\$1" = --yes ] || exit 64
+  [ "\$2" = --bin-dir ] || exit 64
+  [ "\$3" = "\$HOME/.local/bin" ] || exit 64
+  cat >"\$HOME/.local/bin/starship" <<'TOOL'
+#!/bin/sh
+printf 'starship 1.26.0\n'
+TOOL
+  chmod +x "\$HOME/.local/bin/starship"
 fi
 INSTALLER
 EOF
@@ -431,6 +441,93 @@ EOF
     fail 'Zsh could not discover generated completions through the atomic pointer'
 }
 
+test_zsh_initializes_starship_without_omz_theme_fallback() {
+  home="$TEST_TMP_ROOT/zsh-starship-home"
+  bin="$TEST_TMP_ROOT/zsh-starship-bin"
+  mkdir -p "$home" "$bin"
+  cat >"$bin/starship" <<'EOF'
+#!/bin/sh
+set -eu
+[ "$1 $2" = 'init zsh' ]
+printf '%s\n' 'STARSHIP_TEST_INIT=1' 'PROMPT=starship-test'
+EOF
+  chmod +x "$bin/starship"
+
+  set +e
+  HOME="$home" PATH="$bin:/usr/bin:/bin" ZSH_THEME=robbyrussell \
+    ZSH="$home/missing-oh-my-zsh" \
+    ZSH_CUSTOM="$home/missing-oh-my-zsh/custom" zsh -dfc '
+      source "$1"
+      [[ -z ${ZSH_THEME:-} ]] || exit 1
+      [[ "$ZLE_RPROMPT_INDENT" = 0 ]] || exit 1
+      [[ "$STARSHIP_TEST_INIT" = 1 ]] || exit 1
+      [[ "$PROMPT" = starship-test ]] || exit 1
+    ' zsh "$REPO_ROOT/zsh/.zshrc"
+  status=$?
+  set -e
+  [ "$status" -eq 0 ] || fail 'Zsh did not initialize Starship without an Oh My Zsh fallback theme'
+}
+
+test_starship_config_is_focused_tokyo_night_two_line_prompt() {
+  config="$REPO_ROOT/starship/.config/starship.toml"
+  [ -r "$config" ] || fail 'Starship configuration is missing'
+  assert_file_contains "$config" "format = '\$container\$username\$hostname\$directory\$git_branch\$git_status\$git_state\$line_break\$python\$jobs\$character'"
+  assert_file_contains "$config" "right_format = '\$cmd_duration'"
+  assert_file_contains "$config" 'scan_timeout = 30'
+  assert_file_contains "$config" 'command_timeout = 500'
+  assert_file_contains "$config" "style = 'bold #7aa2f7'"
+  assert_file_contains "$config" "min_time = 2000"
+  assert_file_contains "$config" "truncation_length = 3"
+}
+
+test_starship_installer_is_idempotent_and_uses_user_prefix() {
+  home="$TEST_TMP_ROOT/starship-installer-home"
+  bin="$TEST_TMP_ROOT/starship-installer-bin"
+  calls="$TEST_TMP_ROOT/starship-installer-calls"
+  mkdir -p "$home" "$bin"
+  cat >"$bin/curl" <<'EOF'
+#!/bin/sh
+set -eu
+output=
+url=
+while [ "$#" -gt 0 ]; do
+  case $1 in
+    -o|--output) output=$2; shift 2 ;;
+    -*) shift ;;
+    *) url=$1; shift ;;
+  esac
+done
+printf '%s\n' "$url" >>"$DOTFILES_TEST_STARSHIP_CALLS"
+cat >"$output" <<'INSTALLER'
+#!/bin/sh
+set -eu
+[ "$1" = --yes ]
+[ "$2" = --bin-dir ]
+[ "$3" = "$HOME/.local/bin" ]
+mkdir -p "$3"
+cat >"$3/starship" <<'TOOL'
+#!/bin/sh
+printf 'starship 1.26.0\n'
+TOOL
+chmod +x "$3/starship"
+INSTALLER
+EOF
+  chmod +x "$bin/curl"
+
+  for _run_number in 1 2; do
+    HOME="$home" PATH="$bin:/usr/bin:/bin" \
+      DOTFILES_CURL_CMD="$bin/curl" DOTFILES_TEST_STARSHIP_CALLS="$calls" \
+      DOTFILES_STARSHIP_INSTALL_URL=https://example.test/starship \
+      bash -c '. "$1/scripts/provision-common.sh"; install_starship_if_missing' \
+      shell "$REPO_ROOT"
+  done
+
+  assert_equals 1 "$(wc -l <"$calls" | tr -d ' ')" \
+    'Starship was installed more than once'
+  assert_equals 'starship 1.26.0' "$("$home/.local/bin/starship" --version)" \
+    'Starship was not installed into the user prefix'
+}
+
 test_incomplete_uv_installation_is_not_replaced() {
   home="$TEST_TMP_ROOT/incomplete-uv-home"
   bin="$TEST_TMP_ROOT/incomplete-uv-bin"
@@ -472,7 +569,7 @@ test_common_diagnostics_reject_outdated_neovim_with_manual_guidance() {
   for completion_name in _herdr _uv _uvx; do
     printf 'completion\n' >"$completion_dir/$completion_name"
   done
-  for tool_name in uv uvx herdr; do
+  for tool_name in uv uvx herdr starship; do
     cat >"$bin/$tool_name" <<'EOF'
 #!/bin/sh
 exit 0
@@ -503,6 +600,17 @@ EOF
   chmod +x "$bin/nvim"
   HOME="$home" PATH="$bin:/usr/bin:/bin" bash -c \
     '. "$1/scripts/provision-common.sh"; diagnose_common' shell "$REPO_ROOT"
+
+  rm "$bin/starship"
+  set +e
+  diagnostic=$(HOME="$home" PATH="$bin:/usr/bin:/bin" \
+    bash -c '. "$1/scripts/provision-common.sh"; diagnose_common' \
+    shell "$REPO_ROOT" 2>&1)
+  status=$?
+  set -e
+  assert_equals 1 "$status" 'common diagnostics accepted missing Starship'
+  assert_equals 'dotfiles: missing command: starship' "$diagnostic" \
+    'common diagnostics did not name missing Starship precisely'
 }
 
 test_neovim_diagnostics_suppress_current_directory_log() {
@@ -616,7 +724,7 @@ EOF
     '. "$1/scripts/provision-macos.sh"; provision_macos_packages' shell "$REPO_ROOT"
 
   assert_equals \
-    'git neovim stow fzf zoxide fd ripgrep tree-sitter-cli node lazygit graphviz shellcheck' \
+    'git neovim stow fzf zoxide fd ripgrep tree-sitter-cli node lazygit graphviz shellcheck starship' \
     "$(tr '\n' ' ' <"$receipts/formulas" | sed 's/ $//')" \
     'Brewfile formulas differ from the required portable toolset'
 }
@@ -1057,6 +1165,9 @@ test_first_completion_publication_has_one_atomic_entry
 test_zsh_uses_atomic_completion_directory
 test_zsh_falls_back_from_relative_xdg_data_home
 test_zsh_discovers_generated_completions_through_the_atomic_pointer
+test_zsh_initializes_starship_without_omz_theme_fallback
+test_starship_config_is_focused_tokyo_night_two_line_prompt
+test_starship_installer_is_idempotent_and_uses_user_prefix
 test_incomplete_uv_installation_is_not_replaced
 test_common_diagnostics_reject_outdated_neovim_with_manual_guidance
 test_neovim_diagnostics_suppress_current_directory_log

@@ -8,6 +8,7 @@ DOTFILES_GIT_CMD=${DOTFILES_GIT_CMD:-git}
 DOTFILES_MV_CMD=${DOTFILES_MV_CMD:-mv}
 DOTFILES_UV_INSTALL_URL=${DOTFILES_UV_INSTALL_URL:-https://astral.sh/uv/install.sh}
 DOTFILES_HERDR_INSTALL_URL=${DOTFILES_HERDR_INSTALL_URL:-https://herdr.dev/install.sh}
+DOTFILES_STARSHIP_INSTALL_URL=${DOTFILES_STARSHIP_INSTALL_URL:-https://starship.rs/install.sh}
 DOTFILES_OMZ_URL=${DOTFILES_OMZ_URL:-https://github.com/ohmyzsh/ohmyzsh.git}
 DOTFILES_AUTOSUGGESTIONS_URL=${DOTFILES_AUTOSUGGESTIONS_URL:-https://github.com/zsh-users/zsh-autosuggestions.git}
 DOTFILES_SYNTAX_HIGHLIGHTING_URL=${DOTFILES_SYNTAX_HIGHLIGHTING_URL:-https://github.com/zsh-users/zsh-syntax-highlighting.git}
@@ -112,6 +113,18 @@ install_remote_script() (
   "$@" sh "$installer_path"
 )
 
+install_remote_script_with_args() (
+  installer_url=$1
+  installer_name=$2
+  runner=$3
+  shift 3
+  temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/dotfiles-installer.XXXXXX")
+  trap 'rm -rf "$temp_dir"' EXIT HUP INT TERM
+  installer_path="$temp_dir/$installer_name"
+  "$DOTFILES_CURL_CMD" -fsSL -o "$installer_path" "$installer_url"
+  "$runner" "$installer_path" "$@"
+)
+
 install_uv_if_missing() {
   local uv_available=0
   local uvx_available=0
@@ -143,6 +156,19 @@ install_herdr_if_missing() {
   install_remote_script "$DOTFILES_HERDR_INSTALL_URL" herdr-install.sh env
 }
 
+install_starship_if_missing() {
+  if dotfiles_tool_path starship >/dev/null 2>&1; then
+    return 0
+  fi
+  install_remote_script_with_args \
+    "$DOTFILES_STARSHIP_INSTALL_URL" starship-install.sh sh \
+    --yes --bin-dir "$HOME/.local/bin"
+  if ! dotfiles_tool_path starship >/dev/null 2>&1; then
+    dotfiles_error 'Starship installer did not publish a usable command under ~/.local/bin'
+    return 1
+  fi
+}
+
 clone_if_missing() {
   local repository_url=$1
   local destination=$2
@@ -166,6 +192,7 @@ install_shell_dependencies() {
 provision_common() {
   install_uv_if_missing
   install_herdr_if_missing
+  install_starship_if_missing
   install_shell_dependencies
 }
 
@@ -267,7 +294,7 @@ diagnose_common() {
   if ! diagnose_neovim_version; then
     diagnostic_status=1
   fi
-  for tool_name in uv uvx herdr; do
+  for tool_name in uv uvx herdr starship; do
     if ! dotfiles_tool_path "$tool_name" >/dev/null 2>&1; then
       dotfiles_error "missing command: $tool_name"
       diagnostic_status=1

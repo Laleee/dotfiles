@@ -135,6 +135,8 @@ link_managed "$DOTFILES_TEST_REPO/herdr/.config/herdr/config.toml" \
   "$HOME/.config/herdr/config.toml"
 link_managed "$DOTFILES_TEST_REPO/git/.config/git/config" \
   "$HOME/.config/git/config"
+link_managed "$DOTFILES_TEST_REPO/starship/.config/starship.toml" \
+  "$HOME/.config/starship.toml"
 EOF
   chmod +x "$destination"
   DOTFILES_TEST_STOW_BEHAVIOR=$behavior
@@ -346,7 +348,7 @@ test_migration_backs_up_only_managed_targets_and_deploys() {
   [ -L "$home/.config/nvim/init.lua" ] || fail 'migration did not deploy Neovim'
   [ -L "$home/.config/git/config" ] || fail 'migration did not deploy Git config'
   assert_file_contains "$receipt" \
-    "$REPO_ROOT|--no-folding --target=$home zsh nvim herdr git"
+    "$REPO_ROOT|--no-folding --target=$home zsh nvim herdr git starship"
   simulation_count=$(grep -F -c -- '|--simulate --no-folding' "$receipt")
   assert_equals 2 "$simulation_count" 'migration did not simulate before and after backup'
 }
@@ -608,7 +610,7 @@ test_migration_does_not_back_up_a_fully_managed_nvim_tree() {
   simulation_count=$(grep -F -c -- '|--simulate --no-folding' "$receipt")
   assert_equals 1 "$simulation_count" 'migration re-simulated a fully managed Neovim tree'
   assert_file_contains "$receipt" \
-    "$REPO_ROOT|--no-folding --target=$home zsh nvim herdr git"
+    "$REPO_ROOT|--no-folding --target=$home zsh nvim herdr git starship"
 }
 
 test_successful_default_deploys_with_exact_contract() {
@@ -621,9 +623,9 @@ test_successful_default_deploys_with_exact_contract() {
   run_bootstrap "$home" "$stow" "$receipt"
 
   assert_file_contains "$receipt" \
-    "$REPO_ROOT|--simulate --no-folding --target=$home zsh nvim herdr git"
+    "$REPO_ROOT|--simulate --no-folding --target=$home zsh nvim herdr git starship"
   assert_file_contains "$receipt" \
-    "$REPO_ROOT|--no-folding --target=$home zsh nvim herdr git"
+    "$REPO_ROOT|--no-folding --target=$home zsh nvim herdr git starship"
   [ -L "$home/.zshrc" ] || fail 'default mode did not deploy configuration'
   [ -L "$home/.config/git/config" ] || fail 'default mode did not deploy Git config'
 }
@@ -635,8 +637,8 @@ test_real_stow_smoke_validates_package_layout_and_no_folding() {
 
   (
     cd "$REPO_ROOT"
-    stow --simulate --no-folding --target="$home" zsh nvim herdr git
-    stow --no-folding --target="$home" zsh nvim herdr git
+    stow --simulate --no-folding --target="$home" zsh nvim herdr git starship
+    stow --no-folding --target="$home" zsh nvim herdr git starship
   )
 
   if [ ! -d "$home/.config" ] || [ -L "$home/.config" ]; then
@@ -651,7 +653,8 @@ test_real_stow_smoke_validates_package_layout_and_no_folding() {
     .config/nvim/init.lua \
     .config/markdownlint/.markdownlint.yaml \
     .config/herdr/config.toml \
-    .config/git/config
+    .config/git/config \
+    .config/starship.toml
   do
     [ -L "$home/$linked_path" ] ||
       fail "real Stow did not deploy the expected leaf link: $linked_path"

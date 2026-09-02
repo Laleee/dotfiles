@@ -1,0 +1,79 @@
+"$schema" = 'https://starship.rs/config-schema.json'
+
+add_newline = true
+scan_timeout = 30
+command_timeout = 500
+follow_symlinks = false
+format = '$container$username$hostname$directory$git_branch$git_status$git_state$line_break$python$jobs$character'
+right_format = '$cmd_duration'
+
+[container]
+symbol = '󰆧 '
+style = 'bold #f7768e'
+format = '[$symbol$name]($style) '
+
+[username]
+show_always = false
+style_user = '#bb9af7'
+style_root = 'bold #f7768e'
+format = '[$user]($style)@'
+
+[hostname]
+ssh_only = true
+ssh_symbol = '󰒋 '
+style = '#bb9af7'
+format = '[$ssh_symbol$hostname]($style): '
+
+[directory]
+style = 'bold #7aa2f7'
+truncation_length = 3
+truncation_symbol = '…/'
+truncate_to_repo = false
+
+[git_branch]
+symbol = ' '
+style = 'bold #7dcfff'
+format = ' [$symbol$branch]($style)'
+
+[git_status]
+style = '#f7768e'
+format = ' [$all_status$ahead_behind]($style)'
+conflicted = '=[${count}](#f7768e) '
+ahead = '[⇡${count}](#7dcfff) '
+behind = '[⇣${count}](#7dcfff) '
+diverged = '[⇕⇡${ahead_count}⇣${behind_count}](#e0af68) '
+untracked = '?${count} '
+modified = '!${count} '
+staged = '+${count} '
+renamed = '»${count} '
+deleted = '✘${count} '
+stashed = '$${count} '
+
+[git_state]
+style = '#bb9af7'
+format = ' [$state( $progress_current/$progress_total)]($style)'
+
+[python]
+detect_extensions = []
+detect_files = []
+symbol = ' '
+style = '#9ece6a'
+format = '[$symbol$virtualenv]($style) '
+
+[jobs]
+symbol = '󰀠 '
+number_threshold = 2
+symbol_threshold = 1
+style = '#e0af68'
+format = '[$symbol$number]($style) '
+
+[cmd_duration]
+min_time = 2000
+show_milliseconds = true
+style = '#565f89'
+format = 'took [$duration]($style) '
+
+[character]
+success_symbol = '[❯](bold #9ece6a) '
+error_symbol = '[❯](bold #f7768e) '
+vimcmd_symbol = '[❮](bold #bb9af7) '

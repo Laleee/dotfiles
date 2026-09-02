@@ -14,6 +14,7 @@ DOTFILES_MANAGED_TARGETS=(
   .config/markdownlint/.markdownlint.yaml
   .config/herdr/config.toml
   .config/git/config
+  .config/starship.toml
 )
 # Bash 3.2 treats an empty array as unset under `set -u`. Keep an empty
 # sentinel and skip it when iterating so sourceable functions remain portable.
@@ -43,12 +44,12 @@ dotfiles_validate_timestamp_override() {
 dotfiles_stow_simulate() (
   cd "$DOTFILES_REPO_ROOT"
   "$DOTFILES_STOW_CMD" --simulate --no-folding --target="$HOME" \
-    zsh nvim herdr git
+    zsh nvim herdr git starship
 )
 
 dotfiles_stow_deploy() (
   cd "$DOTFILES_REPO_ROOT"
-  "$DOTFILES_STOW_CMD" --no-folding --target="$HOME" zsh nvim herdr git
+  "$DOTFILES_STOW_CMD" --no-folding --target="$HOME" zsh nvim herdr git starship
 )
 
 dotfiles_target_exists() {
@@ -124,6 +125,9 @@ dotfiles_target_is_managed() {
       ;;
     .config/git/config)
       source_path=$DOTFILES_REPO_ROOT/git/$relative_path
+      ;;
+    .config/starship.toml)
+      source_path=$DOTFILES_REPO_ROOT/starship/$relative_path
       ;;
     *) return 1 ;;
   esac

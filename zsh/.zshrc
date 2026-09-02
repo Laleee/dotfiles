@@ -1,7 +1,9 @@
 # Oh My Zsh is optional, so retain a usable shell when it is not installed.
 export ZSH="${ZSH:-$HOME/.oh-my-zsh}"
 export ZSH_CUSTOM="${ZSH_CUSTOM:-$ZSH/custom}"
-ZSH_THEME="robbyrussell"
+# Do not let an inherited Oh My Zsh theme select a fallback prompt.
+unset ZSH_THEME
+export ZLE_RPROMPT_INDENT=0
 
 # Keep history at a useful size without relying on a machine-specific path.
 HISTFILE="${ZDOTDIR:-$HOME}/.zsh_history"
@@ -56,6 +58,12 @@ alias nv='nvim'
 
 # Machine-local customizations are deliberately untracked.
 [[ -r "$HOME/.zshrc.local" ]] && source "$HOME/.zshrc.local"
+
+# Starship owns the prompt when installed. Without it, keep the native Zsh
+# prompt rather than selecting a second theme or replacing an existing prompt.
+if (( $+commands[starship] )); then
+  eval "$(starship init zsh)"
+fi
 
 # Load syntax highlighting last so it can wrap every line-editor widget.
 if [[ -r "$ZSH_CUSTOM/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" ]]; then

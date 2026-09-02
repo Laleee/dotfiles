@@ -1,6 +1,7 @@
 # Portable dotfiles
 
-Portable Git, Zsh, Neovim/LazyVim, Markdownlint, and Herdr configuration.
+Portable Git, Zsh, Starship, Neovim/LazyVim, Markdownlint, and Herdr
+configuration.
 Supported platforms are macOS with Homebrew and current Debian/Ubuntu, each on
 `x86_64` or `arm64` only. Deployment uses GNU Stow with `--no-folding`.
 
@@ -19,7 +20,8 @@ On macOS, install Homebrew before running the script. On Debian/Ubuntu, the
 script uses `apt-get` through `sudo` when necessary and includes `zsh` and the
 `build-essential` compiler toolchain. The script installs only missing
 dependencies, clones only missing shell dependencies, and deploys the `zsh`,
-`nvim`, `herdr`, and `git` Stow packages to `$HOME`. It does not silently upgrade
+`starship`, `nvim`, `herdr`, and `git` Stow packages to `$HOME`. It does not
+silently upgrade
 installed packages, user-local tools, or existing clones.
 
 `setup.sh` is only an orchestrator: it runs a dotfile conflict preflight, calls
@@ -28,7 +30,7 @@ the matching existing `scripts/provision-macos.sh` or
 deploy configuration. `bootstrap.sh` itself never installs packages, downloads
 tools, clones plugins, or generates completions.
 
-Before provisioning, setup checks all six managed targets below. If one
+Before provisioning, setup checks all seven managed targets below. If one
 already exists but is not managed by this repository, it prints the exact path
 and stops without provisioning or changing `$HOME`. Once that preflight is
 clear, setup provisions the machine and bootstrap simulates the Stow deployment
@@ -39,6 +41,7 @@ before creating links:
 - `~/.config/markdownlint/.markdownlint.yaml`
 - `~/.config/herdr/config.toml`
 - `~/.config/git/config`
+- `~/.config/starship.toml`
 
 To deploy only the repository configuration on an already provisioned machine,
 run:
@@ -98,7 +101,8 @@ for path in \
   .config/nvim \
   .config/markdownlint/.markdownlint.yaml \
   .config/herdr/config.toml \
-  .config/git/config
+  .config/git/config \
+  .config/starship.toml
 do
   [ -e "$backup_dir/$path" ] || [ -L "$backup_dir/$path" ] || continue
   rm -rf "$HOME/$path"
@@ -141,6 +145,9 @@ own commands:
 uv self update
 herdr update
 ```
+
+Starship is also never upgraded automatically; update it manually through its
+package manager or by rerunning the official installer when desired.
 
 Use those commands only for installer-managed installations, not copies managed
 by Homebrew or another package manager. Existing Homebrew copies of UV, Herdr,
@@ -202,6 +209,20 @@ during provisioning and loaded from the current completion release. They do not
 run a tool on every shell startup. The Zsh configuration has a warm-start target
 of a median of no more than 350 ms, without startup warnings.
 
+## Starship prompt
+
+The managed prompt is a focused two-line `pureline-plus-nerd` design inspired
+by Tokyo Night: directory and Git context stay on the left, while command
+duration appears on the right only after commands take at least two seconds.
+The prompt uses Nerd Font glyphs; without one, text remains usable but some
+symbols may render as boxes. `ZLE_RPROMPT_INDENT=0` keeps the left prompt
+anchor stable when the right prompt is present.
+
+macOS installs Starship through the Brewfile. Debian/Ubuntu installs the
+official Starship installer into `~/.local/bin`. Existing Starship commands are
+left untouched, and no alternate Oh My Zsh theme is selected if Starship is
+missing.
+
 ## Upstream references
 
 - [LazyVim requirements and installation](https://www.lazyvim.org/) — Neovim
@@ -209,3 +230,5 @@ of a median of no more than 350 ms, without startup warnings.
 - [Neovim installation guide](https://github.com/neovim/neovim/blob/master/INSTALL.md)
 - [UV installation guide](https://docs.astral.sh/uv/getting-started/installation/)
 - [Herdr installation guide](https://herdr.dev/docs/install/)
+- [Starship installation and Zsh setup](https://starship.rs/guide/)
+- [Starship configuration reference](https://starship.rs/config/)
