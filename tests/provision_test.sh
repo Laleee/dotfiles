@@ -471,6 +471,25 @@ test_zsh_defines_the_documented_git_aliases() {
   [ "$status" -eq 0 ] || fail 'Zsh Git aliases do not match the documented contract'
 }
 
+test_zsh_defines_the_omz_directory_aliases() {
+  home="$TEST_TMP_ROOT/zsh-directory-alias-home"
+  mkdir -p "$home"
+  set +e
+  HOME="$home" zsh -dfc '
+      source "$1"
+      [[ ${aliases[l]} == "ls -lah" ]] || exit 1
+      [[ ${aliases[ll]} == "ls -lh" ]] || exit 1
+      [[ ${aliases[la]} == "ls -lAh" ]] || exit 1
+      case $OSTYPE in
+        darwin*) [[ ${aliases[ls]} == "ls -G" ]] || exit 1 ;;
+        linux*) [[ ${aliases[ls]} == "ls --color=auto" ]] || exit 1 ;;
+      esac
+    ' zsh "$REPO_ROOT/zsh/.zshrc"
+  status=$?
+  set -e
+  [ "$status" -eq 0 ] || fail 'Zsh directory aliases do not match the documented contract'
+}
+
 test_zsh_local_config_can_override_git_aliases() {
   home="$TEST_TMP_ROOT/zsh-local-alias-home"
   mkdir -p "$home"
@@ -1827,6 +1846,7 @@ test_zsh_uses_atomic_completion_directory
 test_zsh_falls_back_from_relative_xdg_data_home
 test_zsh_discovers_generated_completions_through_the_atomic_pointer
 test_zsh_defines_the_documented_git_aliases
+test_zsh_defines_the_omz_directory_aliases
 test_zsh_local_config_can_override_git_aliases
 test_zsh_discovers_completions_after_native_compinit
 test_zsh_enables_shared_deduplicated_history

@@ -72,6 +72,13 @@ if (( $+commands[herdr] )); then
   alias hs='herdr status'
   alias hu='herdr update'
 fi
+case $OSTYPE in
+  darwin*) alias ls='ls -G' ;;
+  linux*) alias ls='ls --color=auto' ;;
+esac
+alias l='ls -lah'
+alias ll='ls -lh'
+alias la='ls -lAh'
 alias gst='git status'
 alias gt='git tree'
 alias ga='git add'
