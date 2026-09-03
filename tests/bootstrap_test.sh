@@ -664,8 +664,9 @@ test_real_stow_smoke_validates_package_layout_and_no_folding() {
   [ "$home/.config/nvim/init.lua" -ef "$REPO_ROOT/nvim/.config/nvim/init.lua" ] ||
     fail 'real Stow linked Neovim from the wrong package source'
   for unexpected_path in README.md LICENSE .gitignore .stow-local-ignore; do
-    [ ! -e "$home/$unexpected_path" ] && [ ! -L "$home/$unexpected_path" ] ||
+    if [ -e "$home/$unexpected_path" ] || [ -L "$home/$unexpected_path" ]; then
       fail "real Stow leaked package metadata into the home directory: $unexpected_path"
+    fi
   done
 }
 
