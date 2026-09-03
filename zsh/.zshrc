@@ -15,6 +15,10 @@ fi
 fpath=("$_dotfiles_data_home/zsh/site-functions/.dotfiles-completions-current" $fpath)
 unset _dotfiles_data_home
 
+# Keep completion prefixes available to fzf-tab and label completion groups.
+zstyle ':completion:*' menu no
+zstyle ':completion:*:descriptions' format '[%d]'
+
 # Native Zsh completion also discovers generated Herdr, UV, and UVX files.
 autoload -Uz compinit
 _dotfiles_zcompdump="${ZDOTDIR:-$HOME}/.zcompdump"
@@ -138,11 +142,11 @@ _dotfiles_source_fzf_tab() {
     )
   fi
   plugin_paths+=(
+    "$data_home/zsh/plugins/fzf-tab/fzf-tab.zsh"
     /opt/homebrew/opt/fzf-tab/share/fzf-tab/fzf-tab.zsh
     /opt/homebrew/share/fzf-tab/fzf-tab.zsh
     /usr/local/opt/fzf-tab/share/fzf-tab/fzf-tab.zsh
     /usr/local/share/fzf-tab/fzf-tab.zsh
-    "$data_home/zsh/plugins/fzf-tab/fzf-tab.zsh"
     /usr/share/fzf-tab/fzf-tab.zsh
   )
 
@@ -157,6 +161,23 @@ _dotfiles_source_fzf_tab() {
 
 # fzf-tab wraps the completion widget installed by compinit and fzf.
 (( $+commands[fzf] )) && _dotfiles_source_fzf_tab || true
+
+# Keep fzf-tab compact and useful in Herdr's inline terminal panes.
+zstyle ':fzf-tab:*' fzf-flags \
+  --height=40% \
+  --border=rounded \
+  '--color=fg:#c8d3f5,fg+:#c8d3f5,bg:#222436,bg+:#2d3f76,hl:#7dcfff,hl+:#7dcfff,info:#e0af68,prompt:#7aa2f7,pointer:#bb9af7,marker:#9ece6a,spinner:#bb9af7,header:#7dcfff,border:#444a73,separator:#444a73,scrollbar:#444a73'
+zstyle ':fzf-tab:*' group-colors \
+  $'\033[38;2;122;162;247m' $'\033[38;2;125;207;255m' \
+  $'\033[38;2;158;206;106m' $'\033[38;2;224;175;104m' \
+  $'\033[38;2;187;154;247m' $'\033[38;2;247;118;142m' \
+  $'\033[38;2;115;218;202m' $'\033[38;2;192;202;245m' \
+  $'\033[38;2;122;162;247m' $'\033[38;2;125;207;255m' \
+  $'\033[38;2;158;206;106m' $'\033[38;2;224;175;104m' \
+  $'\033[38;2;187;154;247m' $'\033[38;2;247;118;142m' \
+  $'\033[38;2;115;218;202m' $'\033[38;2;192;202;245m'
+zstyle ':fzf-tab:*' switch-group '<' '>'
+zstyle ':fzf-tab:complete:cd:*' fzf-preview 'ls -la -- "$realpath"'
 
 # Autosuggestions must load after fzf-tab and before local ZLE customizations.
 _dotfiles_source_plugin zsh-autosuggestions zsh-autosuggestions.zsh || true

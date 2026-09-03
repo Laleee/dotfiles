@@ -646,10 +646,12 @@ test_zsh_ignores_relative_homebrew_prefix_for_shell_code() {
   home="$TEST_TMP_ROOT/zsh-relative-homebrew-home"
   work="$TEST_TMP_ROOT/zsh-relative-homebrew-work"
   marker="$TEST_TMP_ROOT/zsh-relative-homebrew-sourced"
+  plugin="$home/.local/share/zsh/plugins/fzf-tab"
   mkdir -p "$home" "$work/bin" \
     "$work/share/zsh-autosuggestions" \
     "$work/share/zsh-syntax-highlighting" \
-    "$work/opt/fzf/shell"
+    "$work/opt/fzf/shell" "$plugin"
+  : >"$plugin/fzf-tab.zsh"
   for script in \
     "$work/share/zsh-autosuggestions/zsh-autosuggestions.zsh" \
     "$work/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" \
@@ -670,7 +672,7 @@ EOF
   set +e
   (
     cd "$work" || exit 1
-    HOME="$home" HOMEBREW_PREFIX=. \
+    HOME="$home" HOMEBREW_PREFIX=. XDG_DATA_HOME="$home/.local/share" \
       DOTFILES_TEST_RELATIVE_PREFIX_MARKER="$marker" \
       PATH="$work/bin:/usr/bin:/bin" \
       zsh -dfc 'source "$1"' zsh "$REPO_ROOT/zsh/.zshrc" \
@@ -771,7 +773,9 @@ EOF
 test_fzf_modern_and_legacy_shell_integrations_preserve_bindings() {
   home="$TEST_TMP_ROOT/zsh-fzf-home"
   bin="$TEST_TMP_ROOT/zsh-fzf-bin"
-  mkdir -p "$home" "$bin"
+  plugin="$home/.local/share/zsh/plugins/fzf-tab"
+  mkdir -p "$home" "$bin" "$plugin"
+  : >"$plugin/fzf-tab.zsh"
   cat >"$bin/fzf" <<'EOF'
 #!/bin/sh
 [ "$1" = --zsh ] || exit 64
@@ -787,7 +791,7 @@ printf '%s\n' \
 EOF
   chmod +x "$bin/fzf"
   set +e
-  HOME="$home" PATH="$bin:/usr/bin:/bin" zsh -dfic \
+  HOME="$home" HOMEBREW_PREFIX="$home/no-homebrew" XDG_DATA_HOME="$home/.local/share" PATH="$bin:/usr/bin:/bin" zsh -dfic \
     'source "$1"; [[ $(bindkey "^R") == *fzf-history-widget* ]] && [[ $(bindkey "^T") == *fzf-file-widget* ]] && [[ $(bindkey "^[c") == *fzf-cd-widget* ]] && [[ $(bindkey "^I") == *fzf-completion* ]] && (( $+functions[fzf-completion] ))' \
     zsh "$REPO_ROOT/zsh/.zshrc"
   modern_status=$?
@@ -799,7 +803,9 @@ test_fzf_legacy_shell_scripts_preserve_key_bindings_and_completion() {
   home="$TEST_TMP_ROOT/zsh-fzf-legacy-home"
   prefix="$home/fzf-prefix"
   share="$prefix/opt/fzf/shell"
-  mkdir -p "$home" "$share" "$home/bin"
+  plugin="$home/.local/share/zsh/plugins/fzf-tab"
+  mkdir -p "$home" "$share" "$home/bin" "$plugin"
+  : >"$plugin/fzf-tab.zsh"
   cat >"$home/bin/fzf" <<'EOF'
 #!/bin/sh
 [ "$1" = --zsh ] || exit 64
@@ -819,7 +825,7 @@ function fzf-completion { :; }
 bindkey '^I' fzf-completion
 EOF
   set +e
-  HOME="$home" HOMEBREW_PREFIX="$prefix" PATH="$home/bin:/usr/bin:/bin" \
+  HOME="$home" HOMEBREW_PREFIX="$prefix" XDG_DATA_HOME="$home/.local/share" PATH="$home/bin:/usr/bin:/bin" \
     zsh -dfic \
     'source "$1"; [[ $(bindkey "^R") == *fzf-history-widget* ]] && [[ $(bindkey "^T") == *fzf-file-widget* ]] && [[ $(bindkey "^[c") == *fzf-cd-widget* ]] && [[ $(bindkey "^I") == *fzf-completion* ]] && (( $+functions[fzf-completion] ))' \
     zsh "$REPO_ROOT/zsh/.zshrc"
@@ -848,7 +854,9 @@ test_fzf_legacy_fallback_uses_one_complete_installation() {
   prefix="$home/fzf-prefix"
   incomplete_root="$prefix/opt/fzf/shell"
   marker="$home/incomplete-root-sourced"
-  mkdir -p "$home/bin" "$incomplete_root"
+  plugin="$home/.local/share/zsh/plugins/fzf-tab"
+  mkdir -p "$home/bin" "$incomplete_root" "$plugin"
+  : >"$plugin/fzf-tab.zsh"
   cat >"$home/bin/fzf" <<'EOF'
 #!/bin/sh
 [ "$1" = --zsh ] || exit 64
@@ -860,7 +868,7 @@ print -r -- sourced > "$DOTFILES_TEST_INCOMPLETE_FZF_MARKER"
 EOF
 
   set +e
-  HOME="$home" HOMEBREW_PREFIX="$prefix" \
+  HOME="$home" HOMEBREW_PREFIX="$prefix" XDG_DATA_HOME="$home/.local/share" \
     DOTFILES_TEST_INCOMPLETE_FZF_MARKER="$marker" \
     PATH="$home/bin:/usr/bin:/bin" \
     zsh -dfic '
