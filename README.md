@@ -266,6 +266,24 @@ macOS installs Starship through the Brewfile. Debian/Ubuntu installs the
 official Starship installer into `~/.local/bin`. Existing Starship commands are
 left untouched; if Starship is missing, native Zsh keeps its normal prompt.
 
+## iTerm2 colors
+
+The repository includes the manually configured Tokyo Night Moon color preset
+at [`iterm/TokyoNight Moon.itermcolors`](iterm/TokyoNight%20Moon.itermcolors).
+It is not imported automatically by `setup.sh`, because iTerm2 profiles are
+macOS application settings rather than shell dotfiles.
+
+To apply it in iTerm2:
+
+1. Open **Settings → Profiles → Colors**.
+2. Open **Color Presets… → Import**.
+3. Select `iterm/TokyoNight Moon.itermcolors` from this repository.
+4. Choose the imported **TokyoNight Moon** preset.
+
+The preset controls iTerm2's ANSI palette, foreground, background, cursor, and
+selection colors. The Starship, fzf, and Git configurations use the same
+Tokyo Night-derived palette.
+
 ## Upstream references
 
 - [LazyVim requirements and installation](https://www.lazyvim.org/) — Neovim
