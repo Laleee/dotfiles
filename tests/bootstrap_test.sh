@@ -598,6 +598,7 @@ test_migration_does_not_back_up_a_fully_managed_nvim_tree() {
   mkdir -p "$home/.config/nvim"
   while IFS= read -r source_file; do
     relative_path=${source_file#"$source_path"/}
+    [ "$relative_path" = .gitignore ] && continue
     mkdir -p "$(dirname "$home/.config/nvim/$relative_path")"
     ln -s "$source_file" "$home/.config/nvim/$relative_path"
   done < <(find "$source_path" \( -type f -o -type l \) -print)

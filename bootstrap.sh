@@ -100,6 +100,8 @@ dotfiles_nvim_tree_is_managed() {
 
   while IFS= read -r source_file; do
     relative_path=${source_file#"$source_path"/}
+    # GNU Stow ignores package .gitignore files by default.
+    [ "$relative_path" = .gitignore ] && continue
     [ -L "$destination/$relative_path" ] &&
       [ "$destination/$relative_path" -ef "$source_file" ] || return 1
   done < <(find "$source_path" \( -type f -o -type l \) -print)
