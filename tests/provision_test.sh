@@ -513,6 +513,85 @@ EOF
   [ "$status" -eq 0 ] || fail 'generated completions were not loaded by native compinit'
 }
 
+test_zsh_enables_shared_deduplicated_history() {
+  home="$TEST_TMP_ROOT/zsh-history-options-home"
+  mkdir -p "$home"
+  set +e
+  HOME="$home" zsh -dfc '
+      source "$1"
+      [[ -o extendedhistory ]] || exit 1
+      [[ -o histignorealldups ]] || exit 1
+      [[ -o histignorespace ]] || exit 1
+      [[ -o histreduceblanks ]] || exit 1
+      [[ -o sharehistory ]] || exit 1
+      [[ ! -o incappendhistory ]] || exit 1
+    ' zsh "$REPO_ROOT/zsh/.zshrc"
+  status=$?
+  set -e
+  [ "$status" -eq 0 ] || fail 'Zsh history options do not enable shared deduplicated history'
+}
+
+test_zsh_only_selects_nvim_editor_when_available() {
+  missing_home="$TEST_TMP_ROOT/zsh-editor-missing-home"
+  mkdir -p "$missing_home"
+  set +e
+  EDITOR=inherited VISUAL=inherited GIT_EDITOR=inherited HOME="$missing_home" \
+    PATH=/usr/bin:/bin zsh -dfc '
+      source "$1"
+      [[ $EDITOR == inherited ]] || exit 1
+      [[ $VISUAL == inherited ]] || exit 1
+      [[ $GIT_EDITOR == inherited ]] || exit 1
+      (( ! $+aliases[nv] )) || exit 1
+    ' zsh "$REPO_ROOT/zsh/.zshrc"
+  missing_status=$?
+  set -e
+  [ "$missing_status" -eq 0 ] || fail 'missing Neovim changed editor defaults or created nv'
+
+  available_home="$TEST_TMP_ROOT/zsh-editor-available-home"
+  mkdir -p "$available_home/.local/bin"
+  : >"$available_home/.local/bin/nvim"
+  chmod +x "$available_home/.local/bin/nvim"
+  set +e
+  HOME="$available_home" PATH=/usr/bin:/bin zsh -dfc '
+      source "$1"
+      [[ $EDITOR == nvim ]] || exit 1
+      [[ $VISUAL == nvim ]] || exit 1
+      [[ $GIT_EDITOR == nvim ]] || exit 1
+      [[ ${aliases[nv]} == nvim ]] || exit 1
+    ' zsh "$REPO_ROOT/zsh/.zshrc"
+  available_status=$?
+  set -e
+  [ "$available_status" -eq 0 ] || fail 'available Neovim did not receive editor defaults and nv'
+}
+
+test_zsh_uses_compinit_cache_until_daily_refresh() {
+  for cache_state in absent fresh stale; do
+    home="$TEST_TMP_ROOT/zsh-compinit-$cache_state-home"
+    dump="$home/.zcompdump"
+    mkdir -p "$home"
+    case $cache_state in
+      fresh) printf '#compdump\n' >"$dump" ;;
+      stale)
+        printf '#compdump\n' >"$dump"
+        touch -t 202001010000 "$dump"
+        ;;
+    esac
+    HOME="$home" zsh -dfc '
+      compinit() { print -r -- "$@" > "$HOME/compinit-args"; }
+      source "$1"
+    ' zsh "$REPO_ROOT/zsh/.zshrc"
+    args=$(cat "$home/compinit-args")
+    case $cache_state in
+      fresh)
+        [[ $args == "-C -i -d $dump" ]] ||
+          fail 'fresh .zcompdump did not use compinit -C' ;;
+      absent|stale)
+        [[ $args == "-i -d $dump" ]] ||
+          fail "$cache_state .zcompdump did not trigger a full compinit scan" ;;
+    esac
+  done
+}
+
 test_zsh_loads_plugins_in_required_order_from_homebrew_share() {
   home="$TEST_TMP_ROOT/zsh-plugin-order-home"
   prefix="$home/homebrew"
@@ -1742,6 +1821,9 @@ test_zsh_discovers_generated_completions_through_the_atomic_pointer
 test_zsh_defines_the_documented_git_aliases
 test_zsh_local_config_can_override_git_aliases
 test_zsh_discovers_completions_after_native_compinit
+test_zsh_enables_shared_deduplicated_history
+test_zsh_only_selects_nvim_editor_when_available
+test_zsh_uses_compinit_cache_until_daily_refresh
 test_zsh_loads_plugins_in_required_order_from_homebrew_share
 test_zsh_loads_plugins_from_usr_share_fallback
 test_zsh_ignores_relative_homebrew_prefix_for_shell_code

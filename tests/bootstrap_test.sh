@@ -634,6 +634,8 @@ test_real_stow_smoke_validates_package_layout_and_no_folding() {
   home="$TEST_TMP_ROOT/real-stow-home"
   mkdir -p "$home"
   command -v stow >/dev/null 2>&1 || fail 'real GNU Stow is required for the smoke test'
+  [ ! -e "$REPO_ROOT/zsh/.stow-local-ignore" ] ||
+    fail 'Zsh package still overrides Stow built-in ignores with an empty file'
 
   (
     cd "$REPO_ROOT"
@@ -661,6 +663,10 @@ test_real_stow_smoke_validates_package_layout_and_no_folding() {
   done
   [ "$home/.config/nvim/init.lua" -ef "$REPO_ROOT/nvim/.config/nvim/init.lua" ] ||
     fail 'real Stow linked Neovim from the wrong package source'
+  for unexpected_path in README.md LICENSE .gitignore .stow-local-ignore; do
+    [ ! -e "$home/$unexpected_path" ] && [ ! -L "$home/$unexpected_path" ] ||
+      fail "real Stow leaked package metadata into the home directory: $unexpected_path"
+  done
 }
 
 test_bootstrap_is_idempotent_and_never_writes_herdr_runtime_state_to_repository() {

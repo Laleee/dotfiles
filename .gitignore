@@ -17,3 +17,4 @@ herdr/.config/herdr/session.json
 .direnv/
 .superpowers/
 docs/superpowers/
+node_modules/

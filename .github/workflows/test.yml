@@ -2,7 +2,12 @@ name: Test dotfiles
 
 on:
   push:
+    branches: [main]
   pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
@@ -30,3 +35,22 @@ jobs:
       # replaces curl and git remote installers with local test doubles.
       - name: Run isolated tests
         run: bash tests/run.sh
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install locked lint dependencies
+        run: npm ci
+
+      - name: Run Lua and Markdown linters
+        run: npm run lint

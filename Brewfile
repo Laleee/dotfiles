@@ -9,6 +9,7 @@ brew "zoxide"
 brew "fd"
 brew "ripgrep"
 brew "tree-sitter-cli"
+# Node supports npm-based Neovim tools and the repository lint commands.
 brew "node"
 brew "lazygit"
 brew "graphviz"

@@ -1,0 +1,16 @@
+{
+  "name": "portable-dotfiles",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "lint": "npm run lint:lua && npm run lint:markdown",
+    "lint:lua": "stylua --check nvim/.config/nvim",
+    "lint:markdown": "markdownlint-cli2 --config nvim/.config/markdownlint/.markdownlint.yaml \"**/*.md\" \"#node_modules/**\" \"#docs/superpowers/**\""
+  },
+  "devDependencies": {
+    "@johnnymorganz/stylua-bin": "2.5.2",
+    "markdownlint-cli2": "0.23.2"
+  }
+}

@@ -2,6 +2,8 @@
 HISTFILE="${ZDOTDIR:-$HOME}/.zsh_history"
 HISTSIZE=50000
 SAVEHIST=50000
+setopt EXTENDED_HISTORY HIST_IGNORE_ALL_DUPS HIST_IGNORE_SPACE \
+  HIST_REDUCE_BLANKS SHARE_HISTORY
 
 # Static completions are published as one atomic release by provisioning.
 typeset -U fpath
@@ -15,7 +17,14 @@ unset _dotfiles_data_home
 
 # Native Zsh completion also discovers generated Herdr, UV, and UVX files.
 autoload -Uz compinit
-compinit -i -d "${ZDOTDIR:-$HOME}/.zcompdump"
+_dotfiles_zcompdump="${ZDOTDIR:-$HOME}/.zcompdump"
+_dotfiles_zcompdump_stale=( "$_dotfiles_zcompdump"(N.mh+24) )
+if [[ ! -s $_dotfiles_zcompdump || $#_dotfiles_zcompdump_stale -gt 0 ]]; then
+  compinit -i -d "$_dotfiles_zcompdump"
+else
+  compinit -C -i -d "$_dotfiles_zcompdump"
+fi
+unset _dotfiles_zcompdump _dotfiles_zcompdump_stale
 
 _dotfiles_source_plugin() {
   local plugin_name=$1
@@ -39,13 +48,16 @@ _dotfiles_source_plugin() {
   return 1
 }
 
-export EDITOR='nvim'
-export VISUAL='nvim'
-export GIT_EDITOR='nvim'
-
 # Keep user-installed tools available and avoid duplicate PATH entries.
 typeset -U path
 path=("$HOME/.local/bin" $path)
+
+if (( $+commands[nvim] )); then
+  export EDITOR='nvim'
+  export VISUAL='nvim'
+  export GIT_EDITOR='nvim'
+  alias nv='nvim'
+fi
 
 if (( $+commands[zoxide] )); then
   eval "$(zoxide init zsh)"
@@ -56,8 +68,6 @@ if (( $+commands[herdr] )); then
   alias hs='herdr status'
   alias hu='herdr update'
 fi
-alias nv='nvim'
-
 alias gst='git status'
 alias gt='git tree'
 alias ga='git add'

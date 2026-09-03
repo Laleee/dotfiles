@@ -151,6 +151,13 @@ herdr update
 Starship is also never upgraded automatically; update it manually through its
 package manager or by rerunning the official installer when desired.
 
+The Debian fzf-tab archive is pinned to a release and verified against its
+SHA-256 checksum before publication. The Neovim archive and the UV, Herdr, and
+Starship installer scripts are downloaded over HTTPS into temporary files but
+are not checksum-verified; this is an accepted trust in the upstream endpoints.
+The `DOTFILES_*_INSTALL_URL` overrides can point to a reviewed mirror or
+immutable endpoint when stronger deployment controls are required.
+
 Use those commands only for installer-managed installations, not copies managed
 by Homebrew or another package manager. Cleanup of duplicate user-local
 installations is intentionally outside provisioning.
@@ -182,6 +189,11 @@ set to an absolute path.
 
 Missing plugin files are skipped safely at shell startup; `setup.sh --check`
 reports missing packages or the missing managed fzf-tab installation.
+
+History uses shared, incrementally written entries with duplicate and leading-
+space filtering. The editor variables and `~/.local/bin` PATH entry are
+interactive-shell settings in `.zshrc`; non-interactive and GUI-launched tools
+must receive their environment through their own launcher configuration.
 
 When available, current fzf releases provide key bindings and fuzzy completion
 through `fzf --zsh`. Older packaged releases use their installed
@@ -237,6 +249,9 @@ Shell completion files for `herdr`, `uv`, and `uvx` are generated statically
 during provisioning and loaded from the current completion release. They do not
 run a tool on every shell startup. The Zsh configuration has a warm-start target
 of a median of no more than 350 ms, without startup warnings.
+
+Repository checks use the locked developer dependencies in `package-lock.json`:
+run `npm ci` followed by `npm run lint` to check Lua and Markdown locally.
 
 ## Starship prompt
 
