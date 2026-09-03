@@ -39,9 +39,6 @@ _dotfiles_source_plugin() {
   return 1
 }
 
-# Autosuggestions must be active before machine-local ZLE customizations.
-_dotfiles_source_plugin zsh-autosuggestions zsh-autosuggestions.zsh || true
-
 export EDITOR='nvim'
 export VISUAL='nvim'
 export GIT_EDITOR='nvim'
@@ -112,6 +109,48 @@ _dotfiles_init_fzf() {
 
 _dotfiles_init_fzf
 
+_dotfiles_source_fzf_tab() {
+  local data_home
+  local plugin_path
+  local -a plugin_paths
+
+  if [[ ${XDG_DATA_HOME:-} == /* ]]; then
+    data_home=$XDG_DATA_HOME
+  else
+    data_home=$HOME/.local/share
+  fi
+
+  plugin_paths=()
+  if [[ ${HOMEBREW_PREFIX:-} == /* ]]; then
+    plugin_paths+=(
+      "$HOMEBREW_PREFIX/opt/fzf-tab/share/fzf-tab/fzf-tab.zsh"
+      "$HOMEBREW_PREFIX/share/fzf-tab/fzf-tab.zsh"
+    )
+  fi
+  plugin_paths+=(
+    /opt/homebrew/opt/fzf-tab/share/fzf-tab/fzf-tab.zsh
+    /opt/homebrew/share/fzf-tab/fzf-tab.zsh
+    /usr/local/opt/fzf-tab/share/fzf-tab/fzf-tab.zsh
+    /usr/local/share/fzf-tab/fzf-tab.zsh
+    "$data_home/zsh/plugins/fzf-tab/fzf-tab.zsh"
+    /usr/share/fzf-tab/fzf-tab.zsh
+  )
+
+  for plugin_path in "${plugin_paths[@]}"; do
+    if [[ -r $plugin_path ]]; then
+      source "$plugin_path"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# fzf-tab wraps the completion widget installed by compinit and fzf.
+(( $+commands[fzf] )) && _dotfiles_source_fzf_tab || true
+
+# Autosuggestions must load after fzf-tab and before local ZLE customizations.
+_dotfiles_source_plugin zsh-autosuggestions zsh-autosuggestions.zsh || true
+
 # Machine-local customizations are deliberately untracked and can override
 # any repository-provided aliases or integrations above.
 [[ -r "$HOME/.zshrc.local" ]] && source "$HOME/.zshrc.local"
@@ -130,4 +169,5 @@ _dotfiles_source_plugin zsh-syntax-highlighting zsh-syntax-highlighting.zsh || t
 # Reassert the prompt anchor contract after the final plugin has loaded.
 ZLE_RPROMPT_INDENT=0
 
-unset -f _dotfiles_source_plugin _dotfiles_init_fzf_fallback _dotfiles_init_fzf
+unset -f _dotfiles_source_plugin _dotfiles_init_fzf_fallback _dotfiles_init_fzf \
+  _dotfiles_source_fzf_tab

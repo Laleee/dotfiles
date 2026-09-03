@@ -16,6 +16,9 @@ DOTFILES_TAR_CMD=${DOTFILES_TAR_CMD:-tar}
 DOTFILES_NPM_CMD=${DOTFILES_NPM_CMD:-npm}
 DOTFILES_OS_RELEASE_FILE=${DOTFILES_OS_RELEASE_FILE:-/etc/os-release}
 DOTFILES_NEOVIM_RELEASE_BASE_URL=${DOTFILES_NEOVIM_RELEASE_BASE_URL:-https://github.com/neovim/neovim/releases/download/stable}
+DOTFILES_FZF_TAB_VERSION=${DOTFILES_FZF_TAB_VERSION:-1.3.0}
+DOTFILES_FZF_TAB_ARCHIVE_URL=${DOTFILES_FZF_TAB_ARCHIVE_URL:-https://github.com/Aloxaf/fzf-tab/archive/refs/tags/v1.3.0.tar.gz}
+DOTFILES_FZF_TAB_SHA256=${DOTFILES_FZF_TAB_SHA256:-d75ac08c2c8af5a6a0478787b0f11fabbe24951973b7841ae963431e2070ee9a}
 DOTFILES_APT_PACKAGES='ca-certificates curl git stow zsh zsh-autosuggestions zsh-syntax-highlighting fzf zoxide fd-find ripgrep nodejs npm build-essential graphviz shellcheck tar xz-utils'
 
 require_debian_family() {
@@ -100,6 +103,68 @@ install_neovim_archive() (
   mv "$temp_dir/$archive_root" "$install_dir"
 )
 
+dotfiles_sha256() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    dotfiles_error 'cannot verify download: sha256sum or shasum is required'
+    return 1
+  fi
+}
+
+fzf_tab_install_is_complete() {
+  local install_dir=$1
+  local required_file
+  for required_file in \
+    fzf-tab.zsh \
+    lib/-ftb-build-module \
+    lib/-ftb-colorize \
+    lib/-ftb-fzf \
+    lib/-ftb-generate-complist \
+    lib/-ftb-generate-header \
+    lib/-ftb-generate-query \
+    lib/-ftb-preview.tpl \
+    lib/-ftb-version \
+    lib/ftb-switch-group \
+    lib/ftb-tmux-popup \
+    lib/zsh-ls-colors/ls-colors.zsh
+  do
+    [ -r "$install_dir/$required_file" ] || return 1
+  done
+}
+
+install_fzf_tab_if_missing() (
+  install_dir=$(dotfiles_data_home)/zsh/plugins/fzf-tab
+  if fzf_tab_install_is_complete "$install_dir"; then
+    return 0
+  fi
+  if [ -e "$install_dir" ] || [ -L "$install_dir" ]; then
+    dotfiles_error "refusing to replace existing incomplete fzf-tab path: $install_dir"
+    return 1
+  fi
+
+  temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/dotfiles-fzf-tab.XXXXXX")
+  trap 'rm -rf "$temp_dir"' EXIT HUP INT TERM
+  archive_path=$temp_dir/fzf-tab.tar.gz
+  "$DOTFILES_CURL_CMD" -fsSL -o "$archive_path" "$DOTFILES_FZF_TAB_ARCHIVE_URL"
+  archive_sha256=$(dotfiles_sha256 "$archive_path")
+  if [ "$archive_sha256" != "$DOTFILES_FZF_TAB_SHA256" ]; then
+    dotfiles_error 'downloaded fzf-tab archive failed SHA-256 verification'
+    return 1
+  fi
+
+  "$DOTFILES_TAR_CMD" -xzf "$archive_path" -C "$temp_dir"
+  archive_root=$temp_dir/fzf-tab-$DOTFILES_FZF_TAB_VERSION
+  if ! fzf_tab_install_is_complete "$archive_root"; then
+    dotfiles_error 'downloaded fzf-tab archive is incomplete'
+    return 1
+  fi
+  mkdir -p "$(dirname -- "$install_dir")"
+  mv "$archive_root" "$install_dir"
+)
+
 ensure_nvim_link() {
   local nvim_source=$HOME/.local/opt/nvim/bin/nvim
   local nvim_link=$HOME/.local/bin/nvim
@@ -146,6 +211,7 @@ provision_debian() {
   ensure_nvim_link
   ensure_fd_link
   install_tree_sitter_cli_if_missing
+  install_fzf_tab_if_missing
   provision_common
   regenerate_completions
 }
@@ -166,6 +232,7 @@ diagnose_debian_packages() {
 
 diagnose_debian() {
   local diagnostic_status=0
+  local fzf_tab_dir
   if ! require_debian_family; then
     diagnostic_status=1
   fi
@@ -183,6 +250,11 @@ diagnose_debian() {
   if ! diagnose_tree_sitter_cli \
     "run npm install --global --prefix $HOME/.local tree-sitter-cli"
   then
+    diagnostic_status=1
+  fi
+  fzf_tab_dir=$(dotfiles_data_home)/zsh/plugins/fzf-tab
+  if ! fzf_tab_install_is_complete "$fzf_tab_dir"; then
+    dotfiles_error "missing or incomplete managed fzf-tab installation: $fzf_tab_dir"
     diagnostic_status=1
   fi
   if ! diagnose_common; then

@@ -19,9 +19,11 @@ cd ~/src/dotfiles
 On macOS, install Homebrew before running the script. On Debian/Ubuntu, the
 script uses `apt-get` through `sudo` when necessary and includes `zsh` and the
 `build-essential` compiler toolchain. The script installs only missing
-dependencies, obtains Zsh plugins from the system package manager, and deploys
-the `zsh`, `starship`, `nvim`, `herdr`, and `git` Stow packages to `$HOME`. It
-does not silently upgrade installed packages or user-local tools. An existing
+dependencies, obtains packaged Zsh plugins from the system package manager,
+and deploys the `zsh`, `starship`, `nvim`, `herdr`, and `git` Stow packages to
+`$HOME`. On Debian/Ubuntu it installs a pinned, checksum-verified fzf-tab
+release under the user data directory because APT does not package it. It does
+not silently upgrade installed packages or user-local tools. An existing
 `~/.oh-my-zsh` directory is left untouched.
 
 `setup.sh` is only an orchestrator: it runs a dotfile conflict preflight, calls
@@ -173,14 +175,21 @@ discovers the generated `herdr`, `uv`, and `uvx` completion files. The
 `zsh-autosuggestions` and `zsh-syntax-highlighting` plugins are installed
 from Homebrew or APT and loaded from the first readable system package
 location (`$HOMEBREW_PREFIX/share`, `/opt/homebrew/share`,
-`/usr/local/share`, or `/usr/share`). Missing plugin files are skipped safely at shell startup;
-`setup.sh --check` reports missing packages through the existing package
-diagnostics.
+`/usr/local/share`, or `/usr/share`). fzf-tab comes from its Homebrew formula
+on macOS and from `$XDG_DATA_HOME/zsh/plugins/fzf-tab` on Debian/Ubuntu,
+defaulting to `~/.local/share/zsh/plugins/fzf-tab` when `XDG_DATA_HOME` is not
+set to an absolute path.
+
+Missing plugin files are skipped safely at shell startup; `setup.sh --check`
+reports missing packages or the missing managed fzf-tab installation.
 
 When available, current fzf releases provide key bindings and fuzzy completion
 through `fzf --zsh`. Older packaged releases use their installed
 `key-bindings.zsh` and `completion.zsh` scripts. Ctrl-R, Ctrl-T, Alt-C, and
-fuzzy completion remain enabled.
+fuzzy completion remain enabled. fzf-tab then replaces Zsh's completion menu
+while continuing to use the native completion results. It loads after
+`compinit` and fzf, before autosuggestions and syntax highlighting, so it owns
+the final Tab widget without disrupting later line-editor wrappers.
 
 Machine-local settings in `~/.zshrc.local` are sourced after autosuggestions
 and the repository aliases, so they can override them. Syntax highlighting is
@@ -248,6 +257,7 @@ left untouched; if Starship is missing, native Zsh keeps its normal prompt.
   version requirement, optional Nerd Font v3 icons, and optional lazygit.
 - [Neovim installation guide](https://github.com/neovim/neovim/blob/master/INSTALL.md)
 - [UV installation guide](https://docs.astral.sh/uv/getting-started/installation/)
+- [fzf-tab installation and load-order guidance](https://github.com/Aloxaf/fzf-tab#install)
 - [Herdr installation guide](https://herdr.dev/docs/install/)
 - [Starship installation and Zsh setup](https://starship.rs/guide/)
 - [Starship configuration reference](https://starship.rs/config/)

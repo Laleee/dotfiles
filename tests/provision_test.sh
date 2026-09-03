@@ -606,6 +606,89 @@ EOF
   [ ! -e "$marker" ] || fail 'relative HOMEBREW_PREFIX allowed shell code from the working directory'
 }
 
+test_zsh_loads_user_fzf_tab_after_fzf_and_before_widget_wrappers() {
+  home="$TEST_TMP_ROOT/zsh-fzf-tab-home"
+  prefix="$home/homebrew"
+  bin="$home/bin"
+  order="$home/order"
+  plugin="$home/.local/share/zsh/plugins/fzf-tab"
+  mkdir -p "$bin" "$plugin" \
+    "$prefix/share/zsh-autosuggestions" \
+    "$prefix/share/zsh-syntax-highlighting"
+  cat >"$bin/fzf" <<'EOF'
+#!/bin/sh
+[ "$1" = --zsh ] || exit 64
+cat <<'ZSH'
+print -r -- fzf >> "$DOTFILES_TEST_FZF_TAB_ORDER"
+function fzf-completion { :; }
+bindkey '^I' fzf-completion
+ZSH
+EOF
+  cat >"$plugin/fzf-tab.zsh" <<'EOF'
+(( $+functions[fzf-completion] )) || return 1
+print -r -- fzf-tab >> "$DOTFILES_TEST_FZF_TAB_ORDER"
+function fzf-tab-complete { :; }
+bindkey '^I' fzf-tab-complete
+EOF
+  cat >"$prefix/share/zsh-autosuggestions/zsh-autosuggestions.zsh" <<'EOF'
+(( $+functions[fzf-tab-complete] )) || return 1
+print -r -- autosuggestions >> "$DOTFILES_TEST_FZF_TAB_ORDER"
+EOF
+  cat >"$prefix/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh" <<'EOF'
+print -r -- syntax-highlighting >> "$DOTFILES_TEST_FZF_TAB_ORDER"
+EOF
+  cat >"$home/.zshrc.local" <<'EOF'
+print -r -- local >> "$DOTFILES_TEST_FZF_TAB_ORDER"
+EOF
+  chmod +x "$bin/fzf"
+
+  set +e
+  HOME="$home" HOMEBREW_PREFIX="$prefix" XDG_DATA_HOME="$home/.local/share" \
+    DOTFILES_TEST_FZF_TAB_ORDER="$order" PATH="$bin:/usr/bin:/bin" \
+    zsh -dfic '
+      source "$1"
+      [[ $(bindkey "^I") == *fzf-tab-complete* ]]
+    ' zsh "$REPO_ROOT/zsh/.zshrc"
+  status=$?
+  set -e
+  [ "$status" -eq 0 ] || fail 'user-local fzf-tab did not retain ownership of the Tab widget'
+  assert_equals 'fzf
+fzf-tab
+autosuggestions
+local
+syntax-highlighting' "$(cat "$order")" \
+    'fzf-tab load order does not preserve completion and widget wrappers'
+}
+
+test_zsh_loads_fzf_tab_from_homebrew_formula_layout() {
+  home="$TEST_TMP_ROOT/zsh-homebrew-fzf-tab-home"
+  prefix="$home/homebrew"
+  bin="$home/bin"
+  plugin="$prefix/opt/fzf-tab/share/fzf-tab"
+  mkdir -p "$bin" "$plugin"
+  cat >"$bin/fzf" <<'EOF'
+#!/bin/sh
+[ "$1" = --zsh ] || exit 64
+printf '%s\n' 'function fzf-completion { :; }' "bindkey '^I' fzf-completion"
+EOF
+  cat >"$plugin/fzf-tab.zsh" <<'EOF'
+function fzf-tab-complete { :; }
+bindkey '^I' fzf-tab-complete
+EOF
+  chmod +x "$bin/fzf"
+
+  set +e
+  HOME="$home" HOMEBREW_PREFIX="$prefix" PATH="$bin:/usr/bin:/bin" \
+    zsh -dfic '
+      source "$1"
+      (( $+functions[fzf-tab-complete] )) || exit 1
+      [[ $(bindkey "^I") == *fzf-tab-complete* ]]
+    ' zsh "$REPO_ROOT/zsh/.zshrc"
+  status=$?
+  set -e
+  [ "$status" -eq 0 ] || fail 'fzf-tab was not loaded from the Homebrew formula layout'
+}
+
 test_fzf_modern_and_legacy_shell_integrations_preserve_bindings() {
   home="$TEST_TMP_ROOT/zsh-fzf-home"
   bin="$TEST_TMP_ROOT/zsh-fzf-bin"
@@ -797,6 +880,177 @@ EOF
     'Starship was installed more than once'
   assert_equals 'starship 1.26.0' "$("$home/.local/bin/starship" --version)" \
     'Starship was not installed into the user prefix'
+}
+
+test_fzf_tab_installer_verifies_and_publishes_pinned_release_once() {
+  home="$TEST_TMP_ROOT/fzf-tab-installer-home"
+  bin="$TEST_TMP_ROOT/fzf-tab-installer-bin"
+  fixture="$TEST_TMP_ROOT/fzf-tab-installer-fixture"
+  archive="$TEST_TMP_ROOT/fzf-tab-v1.3.0.tar.gz"
+  calls="$TEST_TMP_ROOT/fzf-tab-installer-calls"
+  mkdir -p "$home" "$bin" "$fixture/fzf-tab-1.3.0/lib/zsh-ls-colors"
+  cat >"$fixture/fzf-tab-1.3.0/fzf-tab.zsh" <<'EOF'
+function fzf-tab-complete { :; }
+EOF
+  for required_file in \
+    -ftb-build-module \
+    -ftb-colorize \
+    -ftb-fzf \
+    -ftb-generate-complist \
+    -ftb-generate-header \
+    -ftb-generate-query \
+    -ftb-preview.tpl \
+    -ftb-version \
+    ftb-switch-group \
+    ftb-tmux-popup
+  do
+    printf 'library\n' >"$fixture/fzf-tab-1.3.0/lib/$required_file"
+  done
+  printf 'library\n' >"$fixture/fzf-tab-1.3.0/lib/zsh-ls-colors/ls-colors.zsh"
+  tar -C "$fixture" -czf "$archive" fzf-tab-1.3.0
+  if command -v sha256sum >/dev/null 2>&1; then
+    checksum=$(sha256sum "$archive" | awk '{print $1}')
+  else
+    checksum=$(shasum -a 256 "$archive" | awk '{print $1}')
+  fi
+  cat >"$bin/curl" <<'EOF'
+#!/bin/sh
+set -eu
+output=
+while [ "$#" -gt 0 ]; do
+  case $1 in
+    -o) output=$2; shift 2 ;;
+    -*) shift ;;
+    *) shift ;;
+  esac
+done
+printf 'download\n' >>"$DOTFILES_TEST_FZF_TAB_CALLS"
+cp "$DOTFILES_TEST_FZF_TAB_ARCHIVE" "$output"
+EOF
+  chmod +x "$bin/curl"
+
+  for _run_number in 1 2; do
+    HOME="$home" PATH="$bin:/usr/bin:/bin" \
+      DOTFILES_CURL_CMD="$bin/curl" DOTFILES_TEST_FZF_TAB_ARCHIVE="$archive" \
+      DOTFILES_TEST_FZF_TAB_CALLS="$calls" \
+      DOTFILES_FZF_TAB_ARCHIVE_URL=https://example.test/fzf-tab.tar.gz \
+      DOTFILES_FZF_TAB_SHA256="$checksum" \
+      bash -c '
+        . "$1/scripts/provision-debian.sh"
+        require_debian_family() { :; }
+        provision_debian_packages() { :; }
+        install_neovim_archive() { :; }
+        ensure_nvim_link() { :; }
+        ensure_fd_link() { :; }
+        install_tree_sitter_cli_if_missing() { :; }
+        provision_common() { :; }
+        regenerate_completions() { :; }
+        provision_debian
+      ' shell "$REPO_ROOT"
+  done
+
+  plugin="$home/.local/share/zsh/plugins/fzf-tab/fzf-tab.zsh"
+  [ -r "$plugin" ] || fail 'fzf-tab installer did not publish the plugin under the user data directory'
+  assert_equals 1 "$(wc -l <"$calls" | tr -d ' ')" \
+    'fzf-tab installer downloaded an already installed release again'
+}
+
+test_fzf_tab_installer_rejects_bad_checksum_without_partial_install() {
+  home="$TEST_TMP_ROOT/fzf-tab-checksum-home"
+  bin="$TEST_TMP_ROOT/fzf-tab-checksum-bin"
+  temp_dir="$TEST_TMP_ROOT/fzf-tab-checksum-tmp"
+  mkdir -p "$home" "$bin" "$temp_dir"
+  cat >"$bin/curl" <<'EOF'
+#!/bin/sh
+set -eu
+output=
+while [ "$#" -gt 0 ]; do
+  case $1 in
+    -o) output=$2; shift 2 ;;
+    -*) shift ;;
+    *) shift ;;
+  esac
+done
+printf 'not the expected archive\n' >"$output"
+EOF
+  chmod +x "$bin/curl"
+
+  set +e
+  diagnostic=$(HOME="$home" TMPDIR="$temp_dir" PATH="$bin:/usr/bin:/bin" \
+    DOTFILES_CURL_CMD="$bin/curl" \
+    DOTFILES_FZF_TAB_ARCHIVE_URL=https://example.test/fzf-tab.tar.gz \
+    DOTFILES_FZF_TAB_SHA256=0000000000000000000000000000000000000000000000000000000000000000 \
+    bash -c '. "$1/scripts/provision-debian.sh"; install_fzf_tab_if_missing' \
+    shell "$REPO_ROOT" 2>&1)
+  status=$?
+  set -e
+
+  assert_equals 1 "$status" 'fzf-tab installer accepted an archive with the wrong checksum'
+  assert_equals 'dotfiles: downloaded fzf-tab archive failed SHA-256 verification' \
+    "$diagnostic" 'fzf-tab checksum failure diagnostic is not precise'
+  [ ! -e "$home/.local/share/zsh/plugins/fzf-tab" ] ||
+    fail 'fzf-tab checksum failure left a partial installation'
+  [ -z "$(find "$temp_dir" -mindepth 1 -print -quit)" ] ||
+    fail 'fzf-tab checksum failure left temporary files behind'
+}
+
+test_fzf_tab_installer_refuses_incomplete_existing_installation() {
+  home="$TEST_TMP_ROOT/fzf-tab-incomplete-home"
+  bin="$TEST_TMP_ROOT/fzf-tab-incomplete-bin"
+  plugin_dir="$home/.local/share/zsh/plugins/fzf-tab"
+  curl_marker="$home/curl-ran"
+  mkdir -p "$bin" "$plugin_dir/lib"
+  : >"$plugin_dir/fzf-tab.zsh"
+  cat >"$bin/curl" <<'EOF'
+#!/bin/sh
+: >"$DOTFILES_TEST_CURL_MARKER"
+exit 99
+EOF
+  chmod +x "$bin/curl"
+
+  set +e
+  diagnostic=$(HOME="$home" PATH="$bin:/usr/bin:/bin" \
+    DOTFILES_CURL_CMD="$bin/curl" DOTFILES_TEST_CURL_MARKER="$curl_marker" \
+    bash -c '. "$1/scripts/provision-debian.sh"; install_fzf_tab_if_missing' \
+    shell "$REPO_ROOT" 2>&1)
+  status=$?
+  set -e
+
+  assert_equals 1 "$status" 'fzf-tab installer accepted an incomplete existing installation'
+  assert_equals \
+    "dotfiles: refusing to replace existing incomplete fzf-tab path: $plugin_dir" \
+    "$diagnostic" 'incomplete fzf-tab installation diagnostic is not precise'
+  [ ! -e "$curl_marker" ] || fail 'incomplete fzf-tab installation was silently replaced'
+}
+
+test_fzf_tab_installer_refuses_dangling_existing_installation() {
+  home="$TEST_TMP_ROOT/fzf-tab-dangling-home"
+  bin="$TEST_TMP_ROOT/fzf-tab-dangling-bin"
+  plugin_parent="$home/.local/share/zsh/plugins"
+  plugin_dir="$plugin_parent/fzf-tab"
+  curl_marker="$home/curl-ran"
+  mkdir -p "$bin" "$plugin_parent"
+  ln -s "$home/missing-fzf-tab-target" "$plugin_dir"
+  cat >"$bin/curl" <<'EOF'
+#!/bin/sh
+: >"$DOTFILES_TEST_CURL_MARKER"
+exit 99
+EOF
+  chmod +x "$bin/curl"
+
+  set +e
+  diagnostic=$(HOME="$home" PATH="$bin:/usr/bin:/bin" \
+    DOTFILES_CURL_CMD="$bin/curl" DOTFILES_TEST_CURL_MARKER="$curl_marker" \
+    bash -c '. "$1/scripts/provision-debian.sh"; install_fzf_tab_if_missing' \
+    shell "$REPO_ROOT" 2>&1)
+  status=$?
+  set -e
+
+  assert_equals 1 "$status" 'fzf-tab installer accepted a dangling existing installation'
+  assert_equals \
+    "dotfiles: refusing to replace existing incomplete fzf-tab path: $plugin_dir" \
+    "$diagnostic" 'dangling fzf-tab installation diagnostic is not precise'
+  [ ! -e "$curl_marker" ] || fail 'dangling fzf-tab installation was silently replaced'
 }
 
 test_incomplete_uv_installation_is_not_replaced() {
@@ -994,7 +1248,7 @@ EOF
     '. "$1/scripts/provision-macos.sh"; provision_macos_packages' shell "$REPO_ROOT"
 
   assert_equals \
-    'git neovim stow fzf zsh-autosuggestions zsh-syntax-highlighting zoxide fd ripgrep tree-sitter-cli node lazygit graphviz shellcheck starship' \
+    'git neovim stow fzf fzf-tab zsh-autosuggestions zsh-syntax-highlighting zoxide fd ripgrep tree-sitter-cli node lazygit graphviz shellcheck starship' \
     "$(tr '\n' ' ' <"$receipts/formulas" | sed 's/ $//')" \
     'Brewfile formulas differ from the required portable toolset'
 }
@@ -1167,6 +1421,7 @@ EOF
       install_neovim_archive() { :; }
       ensure_fd_link() { :; }
       install_tree_sitter_cli_if_missing() { :; }
+      install_fzf_tab_if_missing() { :; }
       provision_common() { :; }
       regenerate_completions() { :; }
       provision_debian
@@ -1215,6 +1470,7 @@ EOF
         install_neovim_archive() { :; }
         ensure_nvim_link() { :; }
         ensure_fd_link() { :; }
+        install_fzf_tab_if_missing() { :; }
         provision_common() { :; }
         regenerate_completions() { :; }
         provision_debian
@@ -1264,7 +1520,10 @@ EOF
 test_debian_diagnostics_require_tree_sitter_cli_with_install_guidance() {
   home="$TEST_TMP_ROOT/tree-sitter-diagnostic-home"
   bin="$TEST_TMP_ROOT/tree-sitter-diagnostic-bin"
-  mkdir -p "$home/.local/opt/nvim/bin" "$home/.local/bin" "$bin"
+  plugin="$home/.local/share/zsh/plugins/fzf-tab/fzf-tab.zsh"
+  mkdir -p "$home/.local/opt/nvim/bin" "$home/.local/bin" "$bin" \
+    "$(dirname -- "$plugin")/lib"
+  : >"$plugin"
   for command_path in \
     "$home/.local/opt/nvim/bin/nvim" "$home/.local/bin/fd"
   do
@@ -1280,6 +1539,7 @@ EOF
     . "$1/scripts/provision-debian.sh"
     require_debian_family() { :; }
     diagnose_debian_packages() { :; }
+    fzf_tab_install_is_complete() { :; }
     diagnose_common() { :; }
     diagnose_debian
   ' shell "$REPO_ROOT" 2>&1)
@@ -1290,6 +1550,46 @@ EOF
   assert_equals \
     "dotfiles: missing command: tree-sitter; run npm install --global --prefix $home/.local tree-sitter-cli" \
     "$diagnostic" 'Debian Tree-sitter diagnostic guidance is not precise'
+}
+
+test_debian_diagnostics_require_managed_fzf_tab() {
+  home="$TEST_TMP_ROOT/fzf-tab-diagnostic-home"
+  mkdir -p "$home/.local/opt/nvim/bin" "$home/.local/bin"
+  : >"$home/.local/opt/nvim/bin/nvim"
+  : >"$home/.local/bin/fd"
+  chmod +x "$home/.local/opt/nvim/bin/nvim" "$home/.local/bin/fd"
+
+  set +e
+  diagnostic=$(HOME="$home" PATH="/usr/bin:/bin" bash -c '
+    . "$1/scripts/provision-debian.sh"
+    require_debian_family() { :; }
+    diagnose_debian_packages() { :; }
+    diagnose_tree_sitter_cli() { :; }
+    diagnose_common() { :; }
+    diagnose_debian
+  ' shell "$REPO_ROOT" 2>&1)
+  status=$?
+  set -e
+
+  assert_equals 1 "$status" 'Debian diagnostics accepted a missing managed fzf-tab plugin'
+  assert_equals \
+    "dotfiles: missing or incomplete managed fzf-tab installation: $home/.local/share/zsh/plugins/fzf-tab" \
+    "$diagnostic" 'Debian diagnostics did not identify the missing fzf-tab path'
+
+  mkdir -p "$home/.local/share/zsh/plugins/fzf-tab"
+  : >"$home/.local/share/zsh/plugins/fzf-tab/fzf-tab.zsh"
+  set +e
+  HOME="$home" PATH="/usr/bin:/bin" bash -c '
+    . "$1/scripts/provision-debian.sh"
+    require_debian_family() { :; }
+    diagnose_debian_packages() { :; }
+    diagnose_tree_sitter_cli() { :; }
+    diagnose_common() { :; }
+    diagnose_debian
+  ' shell "$REPO_ROOT" >/dev/null 2>&1
+  status=$?
+  set -e
+  assert_equals 1 "$status" 'Debian diagnostics accepted fzf-tab without its library directory'
 }
 
 test_debian_archive_install_and_fd_link() {
@@ -1445,12 +1745,18 @@ test_zsh_discovers_completions_after_native_compinit
 test_zsh_loads_plugins_in_required_order_from_homebrew_share
 test_zsh_loads_plugins_from_usr_share_fallback
 test_zsh_ignores_relative_homebrew_prefix_for_shell_code
+test_zsh_loads_user_fzf_tab_after_fzf_and_before_widget_wrappers
+test_zsh_loads_fzf_tab_from_homebrew_formula_layout
 test_fzf_modern_and_legacy_shell_integrations_preserve_bindings
 test_fzf_legacy_shell_scripts_preserve_key_bindings_and_completion
 test_fzf_legacy_fallback_uses_one_complete_installation
 test_zsh_initializes_starship_without_omz_theme_fallback
 test_starship_config_is_focused_tokyo_night_two_line_prompt
 test_starship_installer_is_idempotent_and_uses_user_prefix
+test_fzf_tab_installer_verifies_and_publishes_pinned_release_once
+test_fzf_tab_installer_rejects_bad_checksum_without_partial_install
+test_fzf_tab_installer_refuses_incomplete_existing_installation
+test_fzf_tab_installer_refuses_dangling_existing_installation
 test_incomplete_uv_installation_is_not_replaced
 test_common_diagnostics_reject_outdated_neovim_with_manual_guidance
 test_neovim_diagnostics_suppress_current_directory_log
@@ -1464,6 +1770,7 @@ test_debian_provision_publishes_nvim_without_overwriting_existing_path
 test_debian_tree_sitter_cli_is_installed_once_in_user_prefix
 test_debian_provision_rejects_unusable_existing_tree_sitter_command
 test_debian_diagnostics_require_tree_sitter_cli_with_install_guidance
+test_debian_diagnostics_require_managed_fzf_tab
 test_debian_archive_install_and_fd_link
 test_root_debian_provisioning_does_not_require_sudo
 test_arm64_archive_name_and_read_only_diagnostics
