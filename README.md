@@ -178,8 +178,10 @@ chsh -s "$(command -v zsh)"
 ## Zsh integration
 
 The managed `.zshrc` uses native Zsh completion (`compinit`) and automatically
-discovers the generated `herdr`, `uv`, and `uvx` completion files. The
-`zsh-autosuggestions` and `zsh-syntax-highlighting` plugins are installed
+discovers the generated `herdr`, `uv`, and `uvx` completion files. When the
+Docker CLI is available, setup also generates its `_docker` completion file;
+if generation fails, setup reports it and continues without Docker completion.
+The `zsh-autosuggestions` and `zsh-syntax-highlighting` plugins are installed
 from Homebrew or APT and loaded from the first readable system package
 location (`$HOMEBREW_PREFIX/share`, `/opt/homebrew/share`,
 `/usr/local/share`, or `/usr/share`). fzf-tab comes from its Homebrew formula

@@ -254,6 +254,17 @@ regenerate_completions() (
 
   chmod 0644 "$completion_release_dir/_herdr" \
     "$completion_release_dir/_uv" "$completion_release_dir/_uvx"
+
+  local docker_cmd
+  if docker_cmd=$(dotfiles_tool_path docker 2>/dev/null); then
+    if "$docker_cmd" completion zsh >"$completion_release_dir/_docker"; then
+      chmod 0644 "$completion_release_dir/_docker"
+    else
+      rm -f "$completion_release_dir/_docker"
+      dotfiles_error "skipping Docker completion: generation failed ($docker_cmd)"
+    fi
+  fi
+
   publish_completion_release "$completion_dir" "$completion_release_dir"
 )
 

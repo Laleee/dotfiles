@@ -99,8 +99,12 @@ test_common_provisioning_is_idempotent_and_regenerates_completions() {
   fake_bin="$TEST_TMP_ROOT/common-bin"
   mkdir -p "$home"
   make_fake_user_tools "$fake_bin"
+  # Keep host-installed Docker out of this test's command lookup.
+  for tool_name in bash cat chmod env ln mkdir mktemp mv readlink rm sh; do
+    ln -s "$(command -v "$tool_name")" "$fake_bin/$tool_name"
+  done
 
-  HOME="$home" PATH="$fake_bin:/usr/bin:/bin" \
+  HOME="$home" PATH="$fake_bin" \
     DOTFILES_UV_INSTALL_URL=https://example.test/uv \
     DOTFILES_HERDR_INSTALL_URL=https://example.test/herdr \
     bash "$REPO_ROOT/scripts/provision-common.sh"
@@ -114,13 +118,69 @@ test_common_provisioning_is_idempotent_and_regenerates_completions() {
   assert_file_contains "$completion_dir/_herdr" 'herdr completion'
   assert_file_contains "$completion_dir/_uv" 'uv completion'
   assert_file_contains "$completion_dir/_uvx" 'uvx completion'
+  [ ! -e "$completion_dir/_docker" ] || fail 'Docker completion was generated without Docker'
 
   printf 'stale\n' >"$completion_dir/_uv"
-  HOME="$home" PATH="$fake_bin:/usr/bin:/bin" \
+  HOME="$home" PATH="$fake_bin" \
     DOTFILES_UV_INSTALL_URL=https://example.test/uv \
     DOTFILES_HERDR_INSTALL_URL=https://example.test/herdr \
     bash "$REPO_ROOT/scripts/provision-common.sh"
   assert_file_contains "$completion_dir/_uv" 'uv completion'
+}
+
+test_common_provisioning_generates_docker_completion_when_available() {
+  home="$TEST_TMP_ROOT/docker-completion-home"
+  fake_bin="$TEST_TMP_ROOT/docker-completion-bin"
+  mkdir -p "$home"
+  make_fake_user_tools "$fake_bin"
+  cat >"$fake_bin/docker" <<'EOF'
+#!/bin/sh
+set -eu
+[ "$1 $2" = 'completion zsh' ] || exit 64
+printf '#compdef docker\ndocker completion\n'
+EOF
+  chmod +x "$fake_bin/docker"
+
+  HOME="$home" PATH="$fake_bin:/usr/bin:/bin" \
+    DOTFILES_UV_INSTALL_URL=https://example.test/uv \
+    DOTFILES_HERDR_INSTALL_URL=https://example.test/herdr \
+    bash "$REPO_ROOT/scripts/provision-common.sh"
+
+  completion_dir="$home/.local/share/zsh/site-functions/.dotfiles-completions-current"
+  assert_file_contains "$completion_dir/_docker" '#compdef docker'
+  assert_file_contains "$completion_dir/_docker" 'docker completion'
+
+  set +e
+  HOME="$home" XDG_DATA_HOME="$home/.local/share" zsh -dfc '
+      source "$1"
+      [[ ${_comps[docker]} == _docker ]]
+    ' zsh "$REPO_ROOT/zsh/.zshrc"
+  status=$?
+  set -e
+  [ "$status" -eq 0 ] || fail 'Zsh did not register the generated Docker completion'
+}
+
+test_docker_completion_failure_does_not_block_provisioning() {
+  home="$TEST_TMP_ROOT/docker-failure-home"
+  fake_bin="$TEST_TMP_ROOT/docker-failure-bin"
+  mkdir -p "$home"
+  make_fake_user_tools "$fake_bin"
+  cat >"$fake_bin/docker" <<'EOF'
+#!/bin/sh
+printf '#compdef docker\npartial completion\n'
+exit 7
+EOF
+  chmod +x "$fake_bin/docker"
+
+  HOME="$home" PATH="$fake_bin:/usr/bin:/bin" \
+    bash "$REPO_ROOT/scripts/provision-common.sh" ||
+    fail 'Docker completion failure blocked provisioning'
+
+  completion_dir="$home/.local/share/zsh/site-functions/.dotfiles-completions-current"
+  assert_file_contains "$completion_dir/_herdr" 'herdr completion'
+  assert_file_contains "$completion_dir/_uv" 'uv completion'
+  assert_file_contains "$completion_dir/_uvx" 'uvx completion'
+  [ ! -e "$completion_dir/_docker" ] || fail 'Incomplete Docker completion was published'
 }
 
 test_common_provisioning_does_not_clone_omz_or_plugins() {
@@ -1835,6 +1895,8 @@ EOF
 }
 
 test_common_provisioning_is_idempotent_and_regenerates_completions
+test_common_provisioning_generates_docker_completion_when_available
+test_docker_completion_failure_does_not_block_provisioning
 test_common_provisioning_does_not_clone_omz_or_plugins
 test_brewfile_and_debian_packages_include_zsh_plugins
 test_relative_xdg_data_home_publishes_completions_inside_home
