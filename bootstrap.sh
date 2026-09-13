@@ -91,6 +91,7 @@ dotfiles_nvim_tree_is_managed() {
   local source_path=$DOTFILES_REPO_ROOT/nvim/.config/nvim
   local source_file
   local relative_path
+  local managed_link_found=0
 
   if [ -L "$destination" ]; then
     [ "$destination" -ef "$source_path" ]
@@ -102,9 +103,21 @@ dotfiles_nvim_tree_is_managed() {
     relative_path=${source_file#"$source_path"/}
     # GNU Stow ignores package .gitignore files by default.
     [ "$relative_path" = .gitignore ] && continue
+    if [ -d "$source_file" ]; then
+      if dotfiles_target_exists "$destination/$relative_path" &&
+        [ ! -d "$destination/$relative_path" ]; then
+        return 1
+      fi
+      continue
+    fi
+    # New source files have no destination until the next Stow deployment.
+    dotfiles_target_exists "$destination/$relative_path" || continue
     [ -L "$destination/$relative_path" ] &&
       [ "$destination/$relative_path" -ef "$source_file" ] || return 1
-  done < <(find "$source_path" \( -type f -o -type l \) -print)
+    managed_link_found=1
+  done < <(find "$source_path" -mindepth 1 \( -type d -o -type f -o -type l \) -print)
+  # Do not adopt an unrelated or empty directory without explicit migration.
+  [ "$managed_link_found" -eq 1 ]
 }
 
 dotfiles_target_is_managed() {
@@ -156,6 +169,8 @@ dotfiles_report_conflicts() {
 
 dotfiles_record_target_state() {
   local relative_path
+  local source_file
+  local nvim_source=$DOTFILES_REPO_ROOT/nvim/.config/nvim
   DOTFILES_ABSENT_TARGETS=('')
   DOTFILES_MOVED_TARGETS=('')
   DOTFILES_BACKUP_ROOT=
@@ -164,6 +179,14 @@ dotfiles_record_target_state() {
       DOTFILES_ABSENT_TARGETS+=("$relative_path")
     fi
   done
+  if dotfiles_nvim_tree_is_managed "$HOME/.config/nvim"; then
+    while IFS= read -r source_file; do
+      relative_path=.config/nvim/${source_file#"$nvim_source"/}
+      if ! dotfiles_target_exists "$HOME/$relative_path"; then
+        DOTFILES_ABSENT_TARGETS+=("$relative_path")
+      fi
+    done < <(find "$nvim_source" \( -type f -o -type l \) -print)
+  fi
 }
 
 dotfiles_have_unmanaged_migratable_targets() {

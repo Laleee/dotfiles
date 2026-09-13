@@ -671,6 +671,51 @@ test_real_stow_smoke_validates_package_layout_and_no_folding() {
   done
 }
 
+test_real_stow_redeploys_new_nvim_files_without_migration() {
+  local fixture_repo="$TEST_TMP_ROOT/update-repo"
+  local target_home="$TEST_TMP_ROOT/update-home"
+  local new_plugin=lua/plugins/new-plugin.lua
+  mkdir -p "$fixture_repo" "$target_home"
+  cp "$REPO_ROOT/bootstrap.sh" "$fixture_repo/"
+  cp -R "$REPO_ROOT/zsh" "$REPO_ROOT/nvim" "$REPO_ROOT/herdr" \
+    "$REPO_ROOT/git" "$REPO_ROOT/starship" "$fixture_repo/"
+
+  env HOME="$target_home" bash "$fixture_repo/bootstrap.sh"
+  printf 'return {}\n' >"$fixture_repo/nvim/.config/nvim/$new_plugin"
+  printf 'keep local state\n' >"$target_home/.config/nvim/local-state"
+
+  env HOME="$target_home" bash "$fixture_repo/bootstrap.sh" --check ||
+    fail 'adding a Neovim source file made the deployed tree unmanaged'
+  env HOME="$target_home" bash "$fixture_repo/bootstrap.sh" ||
+    fail 'real Stow could not deploy a newly added Neovim file'
+  [ "$target_home/.config/nvim/$new_plugin" -ef \
+    "$fixture_repo/nvim/.config/nvim/$new_plugin" ] ||
+    fail 'new Neovim plugin was not deployed'
+  assert_equals 'keep local state' "$(cat "$target_home/.config/nvim/local-state")" \
+    'redeployment changed unrelated Neovim state'
+
+  mkdir -p "$fixture_repo/nvim/.config/nvim/lua/new-directory"
+  printf 'return {}\n' >"$fixture_repo/nvim/.config/nvim/lua/new-directory/plugin.lua"
+  printf 'blocks new directory\n' >"$target_home/.config/nvim/lua/new-directory"
+  if env HOME="$target_home" bash "$fixture_repo/bootstrap.sh" --check >/dev/null 2>&1; then
+    fail 'preflight accepted a file blocking a new Neovim directory'
+  fi
+  env HOME="$target_home" XDG_STATE_HOME="$target_home/state" \
+    DOTFILES_TIMESTAMP=directory-conflict bash "$fixture_repo/bootstrap.sh" --migrate
+  assert_equals 'blocks new directory' \
+    "$(cat "$target_home/state/dotfiles-backups/directory-conflict/.config/nvim/lua/new-directory")" \
+    'migration did not back up a conflict at a new Neovim directory'
+  [ -L "$target_home/.config/nvim/lua/new-directory/plugin.lua" ] ||
+    fail 'migration did not deploy the new Neovim directory'
+
+  # A new source must still conflict with an existing unmanaged destination.
+  printf 'return {}\n' >"$fixture_repo/nvim/.config/nvim/lua/plugins/conflict.lua"
+  printf 'user config\n' >"$target_home/.config/nvim/lua/plugins/conflict.lua"
+  if env HOME="$target_home" bash "$fixture_repo/bootstrap.sh" --check >/dev/null 2>&1; then
+    fail 'preflight accepted an unmanaged file at a new Neovim destination'
+  fi
+}
+
 test_bootstrap_is_idempotent_and_never_writes_herdr_runtime_state_to_repository() {
   home="$TEST_TMP_ROOT/idempotent-home"
   stow="$TEST_TMP_ROOT/idempotent-stow"
@@ -714,5 +759,6 @@ test_failed_deployment_restores_partially_managed_nvim_directory
 test_migration_does_not_back_up_a_fully_managed_nvim_tree
 test_successful_default_deploys_with_exact_contract
 test_real_stow_smoke_validates_package_layout_and_no_folding
+test_real_stow_redeploys_new_nvim_files_without_migration
 test_bootstrap_is_idempotent_and_never_writes_herdr_runtime_state_to_repository
 printf 'ok - bootstrap behavior\n'
