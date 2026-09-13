@@ -76,6 +76,9 @@ neovim_archive_url() {
 }
 
 install_neovim_archive() (
+  if dotfiles_tool_path nvim >/dev/null 2>&1; then
+    return 0
+  fi
   install_dir=$HOME/.local/opt/nvim
   if [ -x "$install_dir/bin/nvim" ]; then
     return 0
@@ -168,6 +171,9 @@ install_fzf_tab_if_missing() (
 ensure_nvim_link() {
   local nvim_source=$HOME/.local/opt/nvim/bin/nvim
   local nvim_link=$HOME/.local/bin/nvim
+  if dotfiles_tool_path nvim >/dev/null 2>&1; then
+    return 0
+  fi
   if [ ! -x "$nvim_source" ]; then
     dotfiles_error "managed Neovim executable is missing: $nvim_source"
     return 1
@@ -237,10 +243,6 @@ diagnose_debian() {
     diagnostic_status=1
   fi
   if ! diagnose_debian_packages; then
-    diagnostic_status=1
-  fi
-  if [ ! -x "$HOME/.local/opt/nvim/bin/nvim" ]; then
-    dotfiles_error 'missing managed Neovim installation'
     diagnostic_status=1
   fi
   if [ ! -x "$HOME/.local/bin/fd" ]; then

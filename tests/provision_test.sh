@@ -1606,6 +1606,76 @@ EOF
     'provisioning changed an existing Neovim command'
 }
 
+test_debian_provision_preserves_existing_nvim_commands() {
+  local install_case
+  local target_home
+  local fixture_bin
+  local existing_nvim
+  for install_case in on-path cached-archive user-local; do
+    target_home="$TEST_TMP_ROOT/preserve-nvim-$install_case-home"
+    fixture_bin="$TEST_TMP_ROOT/preserve-nvim-$install_case-bin"
+    mkdir -p "$target_home" "$fixture_bin"
+    existing_nvim="$fixture_bin/nvim"
+    if [ "$install_case" = user-local ]; then
+      mkdir -p "$target_home/.local/bin"
+      existing_nvim="$target_home/.local/bin/nvim"
+    fi
+    printf '#!/bin/sh\nprintf "NVIM v0.11.2\\n"\n' >"$existing_nvim"
+    chmod +x "$existing_nvim"
+    if [ "$install_case" = cached-archive ]; then
+      mkdir -p "$target_home/.local/opt/nvim/bin"
+      cp "$existing_nvim" "$target_home/.local/opt/nvim/bin/nvim"
+    fi
+    cat >"$fixture_bin/curl" <<'EOF'
+#!/bin/sh
+: >"$HOME/download-attempted"
+exit 73
+EOF
+    chmod +x "$fixture_bin/curl"
+
+    # Fixture variables are evaluated by the child Bash.
+    # shellcheck disable=SC2016
+    env HOME="$target_home" PATH="$fixture_bin:/usr/bin:/bin" \
+      DOTFILES_CURL_CMD="$fixture_bin/curl" bash -c '
+        . "$1/scripts/provision-debian.sh"
+        require_debian_family() { :; }
+        provision_debian_packages() { :; }
+        ensure_fd_link() { :; }
+        install_tree_sitter_cli_if_missing() { :; }
+        install_fzf_tab_if_missing() { :; }
+        provision_common() { :; }
+        regenerate_completions() { :; }
+        provision_debian
+        dotfiles_tool_path nvim >"$HOME/selected-nvim"
+      ' shell "$REPO_ROOT" || fail "provisioning failed with existing Neovim ($install_case)"
+    [ ! -e "$target_home/download-attempted" ] || fail 'existing Neovim triggered a download'
+    assert_equals "$existing_nvim" "$(cat "$target_home/selected-nvim")" \
+      'provisioning shadowed an existing Neovim command'
+    assert_equals 'NVIM v0.11.2' "$("$existing_nvim" --version)" \
+      'provisioning modified the existing Neovim command'
+  done
+}
+
+test_debian_diagnostics_accept_existing_nvim_outside_managed_prefix() {
+  local target_home="$TEST_TMP_ROOT/external-nvim-diagnostic-home"
+  local fixture_bin="$TEST_TMP_ROOT/external-nvim-diagnostic-bin"
+  mkdir -p "$target_home/.local/bin" "$fixture_bin"
+  printf '#!/bin/sh\nprintf "NVIM v0.11.2\\n"\n' >"$fixture_bin/nvim"
+  printf '#!/bin/sh\nexit 0\n' >"$target_home/.local/bin/fd"
+  chmod +x "$fixture_bin/nvim" "$target_home/.local/bin/fd"
+  # The child Bash loads the provisioner and its diagnostic functions.
+  # shellcheck disable=SC2016
+  env HOME="$target_home" PATH="$fixture_bin:/usr/bin:/bin" bash -c '
+    . "$1/scripts/provision-debian.sh"
+    require_debian_family() { :; }
+    diagnose_debian_packages() { :; }
+    diagnose_tree_sitter_cli() { :; }
+    fzf_tab_install_is_complete() { :; }
+    diagnose_common() { diagnose_neovim_version; }
+    diagnose_debian
+  ' shell "$REPO_ROOT" || fail 'Debian diagnostics rejected a usable external Neovim'
+}
+
 test_debian_tree_sitter_cli_is_installed_once_in_user_prefix() {
   home="$TEST_TMP_ROOT/tree-sitter-home"
   bin="$TEST_TMP_ROOT/tree-sitter-bin"
@@ -1939,6 +2009,8 @@ test_macos_diagnostics_accept_installed_outdated_formulas_and_name_missing_formu
 test_macos_diagnostics_require_usable_tree_sitter_command
 test_macos_provision_rejects_unusable_tree_sitter_command
 test_debian_provision_publishes_nvim_without_overwriting_existing_path
+test_debian_provision_preserves_existing_nvim_commands
+test_debian_diagnostics_accept_existing_nvim_outside_managed_prefix
 test_debian_tree_sitter_cli_is_installed_once_in_user_prefix
 test_debian_provision_rejects_unusable_existing_tree_sitter_command
 test_debian_diagnostics_require_tree_sitter_cli_with_install_guidance

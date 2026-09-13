@@ -229,10 +229,13 @@ precedence over these dotfiles defaults.
 
 ## Neovim and optional tools
 
-LazyVim requires Neovim **0.11.2 or newer**. Linux provisioning installs the
-official stable Neovim archive under `~/.local/opt/nvim` and, when the path is
-free, publishes it as `~/.local/bin/nvim`; macOS obtains Neovim from the
-Brewfile. The deployed Zsh configuration adds `~/.local/bin` to `PATH`.
+LazyVim requires Neovim **0.11.2 or newer**. Linux provisioning preserves an
+existing `nvim` command on `PATH` or in `~/.local/bin`. When none exists, it
+installs the official stable Neovim archive under `~/.local/opt/nvim` and, when
+the path is free, publishes it as `~/.local/bin/nvim`; macOS obtains Neovim from
+the Brewfile. Diagnostics check the selected command's version regardless of
+its installation location. The deployed Zsh configuration adds `~/.local/bin`
+to `PATH`.
 
 LazyVim parser support also requires the Tree-sitter CLI and a C compiler.
 macOS gets `tree-sitter-cli` from the Brewfile. Debian/Ubuntu gets the compiler
