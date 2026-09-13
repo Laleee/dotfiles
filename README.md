@@ -86,8 +86,9 @@ provisioned, `./bootstrap.sh --migrate` performs only the migration and
 deployment. The backup is at
 `$XDG_STATE_HOME/dotfiles-backups/<UTC-timestamp>` (or, by default,
 `~/.local/state/dotfiles-backups/<UTC-timestamp>`). The script prints the
-backup path on a successful migration. It attempts an automatic rollback if
-deployment fails.
+backup path before moving any configuration. It attempts an automatic rollback
+if deployment fails or migration receives HUP, INT, or TERM, and reports the
+backup location if recovery is incomplete.
 
 Only absolute `XDG_STATE_HOME` and `XDG_DATA_HOME` values are honored. Relative
 values safely fall back to `~/.local/state` and `~/.local/share`, respectively,

@@ -268,6 +268,8 @@ dotfiles_rollback_migration() {
   if ! dotfiles_remove_new_deployment; then
     rollback_status=1
   fi
+  # Once restoration begins, a signal must never remove restored originals.
+  DOTFILES_MIGRATION_DEPLOY_STARTED=0
   if ! dotfiles_restore_moved_targets; then
     rollback_status=1
   fi
@@ -278,18 +280,21 @@ dotfiles_backup_managed_targets() {
   local relative_path
   local destination
   dotfiles_make_backup_root || return 1
+  dotfiles_report_created_backup
   for relative_path in "${DOTFILES_MANAGED_TARGETS[@]}"; do
     if dotfiles_target_exists "$HOME/$relative_path" &&
       ! dotfiles_target_is_managed "$relative_path"
     then
       destination=$DOTFILES_BACKUP_ROOT/$relative_path
       mkdir -p "$(dirname -- "$destination")"
+      DOTFILES_PENDING_BACKUP_TARGET=$relative_path
       if ! mv "$HOME/$relative_path" "$destination"; then
         bootstrap_error "could not back up $HOME/$relative_path"
         dotfiles_restore_moved_targets || :
         return 1
       fi
       DOTFILES_MOVED_TARGETS+=("$relative_path")
+      DOTFILES_PENDING_BACKUP_TARGET=
     fi
   done
 }
@@ -315,7 +320,44 @@ dotfiles_deploy_default() {
   fi
 }
 
+dotfiles_interrupt_migration() {
+  local moved_target
+  # Do not allow a second signal to interrupt recovery.
+  trap '' HUP INT TERM
+  bootstrap_error 'migration interrupted; restoring original configuration'
+  # A signal may arrive after mv succeeds but before its bookkeeping runs.
+  for moved_target in "${DOTFILES_MOVED_TARGETS[@]}"; do
+    if [ "$moved_target" = "$DOTFILES_PENDING_BACKUP_TARGET" ]; then
+      DOTFILES_PENDING_BACKUP_TARGET=
+      break
+    fi
+  done
+  if [ -n "$DOTFILES_PENDING_BACKUP_TARGET" ] &&
+    dotfiles_target_exists "$DOTFILES_BACKUP_ROOT/$DOTFILES_PENDING_BACKUP_TARGET"; then
+    DOTFILES_MOVED_TARGETS+=("$DOTFILES_PENDING_BACKUP_TARGET")
+  fi
+  if [ "$DOTFILES_MIGRATION_DEPLOY_STARTED" -eq 1 ]; then
+    dotfiles_rollback_migration || dotfiles_report_incomplete_rollback
+  else
+    dotfiles_restore_moved_targets || dotfiles_report_incomplete_rollback
+  fi
+  exit 1
+}
+
 dotfiles_deploy_migration() {
+  local previous_signal_traps
+  local migration_status=0
+  local DOTFILES_PENDING_BACKUP_TARGET=
+  local DOTFILES_MIGRATION_DEPLOY_STARTED=0
+  previous_signal_traps=$(trap -p HUP INT TERM)
+  trap dotfiles_interrupt_migration HUP INT TERM
+  dotfiles_deploy_migration_transaction || migration_status=$?
+  trap - HUP INT TERM
+  eval "$previous_signal_traps"
+  return "$migration_status"
+}
+
+dotfiles_deploy_migration_transaction() {
   dotfiles_record_target_state
   if dotfiles_stow_simulate; then
     if dotfiles_have_unmanaged_migratable_targets; then
@@ -329,13 +371,13 @@ dotfiles_deploy_migration() {
         return 1
       fi
     fi
+    DOTFILES_MIGRATION_DEPLOY_STARTED=1
     if ! dotfiles_stow_deploy; then
       bootstrap_error 'Stow deployment failed; removing newly deployed links'
       dotfiles_rollback_migration ||
         dotfiles_report_incomplete_rollback
       return 1
     fi
-    dotfiles_report_created_backup
     return 0
   fi
 
@@ -352,13 +394,13 @@ dotfiles_deploy_migration() {
       dotfiles_report_incomplete_rollback
     return 1
   fi
+  DOTFILES_MIGRATION_DEPLOY_STARTED=1
   if ! dotfiles_stow_deploy; then
     bootstrap_error 'Stow deployment failed; restoring migrated targets'
     dotfiles_rollback_migration ||
       dotfiles_report_incomplete_rollback
     return 1
   fi
-  dotfiles_report_created_backup
 }
 
 bootstrap_main() {

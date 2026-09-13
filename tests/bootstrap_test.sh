@@ -458,6 +458,107 @@ test_rollback_retains_directory_backup_when_cleanup_leaves_destination() {
   esac
 }
 
+test_migration_restores_originals_when_interrupted() {
+  local signal_name
+  local interrupt_phase
+  local target_home
+  local output_file
+  local interrupted_status
+  for signal_name in TERM HUP INT; do
+    for interrupt_phase in after-backup before-backup deployment; do
+      target_home="$TEST_TMP_ROOT/signal-$signal_name-$interrupt_phase-home"
+      output_file="$TEST_TMP_ROOT/signal-$signal_name-$interrupt_phase.out"
+      mkdir -p "$target_home"
+      printf 'original zshrc\n' >"$target_home/.zshrc"
+      printf 'original zprofile\n' >"$target_home/.zprofile"
+      set +e
+      # Fixture variables are expanded by the child Bash, not this shell.
+      # shellcheck disable=SC2016
+      env HOME="$target_home" XDG_STATE_HOME="$target_home/state" \
+        DOTFILES_TIMESTAMP=interrupted DOTFILES_TEST_SIGNAL="$signal_name" \
+        DOTFILES_TEST_PHASE="$interrupt_phase" bash -c '
+          . "$1/bootstrap.sh"
+          dotfiles_stow_simulate() { return 0; }
+          mv() {
+            if [ "$1" = "$HOME/.zshrc" ] && [ "$DOTFILES_TEST_PHASE" = before-backup ]; then
+              kill -s "$DOTFILES_TEST_SIGNAL" "$$"
+            fi
+            command mv "$@" || return $?
+            if [ "$1" = "$HOME/.zshrc" ] && [ "$DOTFILES_TEST_PHASE" = after-backup ]; then
+              kill -s "$DOTFILES_TEST_SIGNAL" "$$"
+            fi
+          }
+          dotfiles_stow_deploy() {
+            ln -s "$DOTFILES_REPO_ROOT/zsh/.zshrc" "$HOME/.zshrc"
+            kill -s "$DOTFILES_TEST_SIGNAL" "$$"
+          }
+          bootstrap_main --migrate
+        ' shell "$REPO_ROOT" >"$output_file" 2>&1
+      interrupted_status=$?
+      set -e
+      [ -f "$target_home/.zshrc" ] && [ ! -L "$target_home/.zshrc" ] ||
+        fail "$signal_name during $interrupt_phase left .zshrc unrestored"
+      assert_equals 'original zshrc' "$(cat "$target_home/.zshrc")" \
+        "$signal_name during $interrupt_phase changed .zshrc"
+      assert_equals 'original zprofile' "$(cat "$target_home/.zprofile")" \
+        "$signal_name during $interrupt_phase changed .zprofile"
+      assert_equals 1 "$interrupted_status" 'interrupted migration did not exit 1'
+      assert_file_contains "$output_file" \
+        "backup created at $target_home/state/dotfiles-backups/interrupted"
+    done
+  done
+}
+
+test_real_stow_migration_restores_originals_after_signal() {
+  local target_home="$TEST_TMP_ROOT/real-signal-home"
+  local stow_wrapper="$TEST_TMP_ROOT/real-signal-stow"
+  local output_file="$TEST_TMP_ROOT/real-signal.out"
+  local interrupted_status
+  mkdir -p "$target_home"
+  seed_managed_conflicts "$target_home"
+  cat >"$stow_wrapper" <<'EOF'
+#!/bin/sh
+"$DOTFILES_TEST_REAL_STOW" "$@" || exit $?
+case $1 in
+  --simulate) ;;
+  *) kill -TERM "$DOTFILES_TEST_BOOTSTRAP_PID" ;;
+esac
+EOF
+  chmod +x "$stow_wrapper"
+  set +e
+  # The exec keeps the child PID while exercising the actual bootstrap CLI.
+  # shellcheck disable=SC2016
+  env HOME="$target_home" XDG_STATE_HOME="$target_home/state" \
+    DOTFILES_STOW_CMD="$stow_wrapper" DOTFILES_TEST_REAL_STOW="$(command -v stow)" \
+    bash -c '
+      export DOTFILES_TEST_BOOTSTRAP_PID=$$
+      exec bash "$1/bootstrap.sh" --migrate
+    ' shell "$REPO_ROOT" >"$output_file" 2>&1
+  interrupted_status=$?
+  set -e
+  assert_equals 1 "$interrupted_status" 'real Stow interruption did not exit 1'
+  assert_originals_restored "$target_home"
+  [ ! -e "$target_home/.config/starship.toml" ] ||
+    fail 'interrupted real Stow deployment left a new target'
+  assert_file_contains "$output_file" 'migration interrupted; restoring original configuration'
+}
+
+test_migration_preserves_callers_signal_traps() {
+  local target_home="$TEST_TMP_ROOT/signal-traps-home"
+  mkdir -p "$target_home"
+  # The child Bash evaluates and compares its own trap definitions.
+  # shellcheck disable=SC2016
+  env HOME="$target_home" bash -c '
+    . "$1/bootstrap.sh"
+    dotfiles_stow_simulate() { return 0; }
+    dotfiles_stow_deploy() { return 0; }
+    trap "exit 92" HUP INT TERM
+    previous_traps=$(trap -p HUP INT TERM)
+    bootstrap_main --migrate
+    [ "$previous_traps" = "$(trap -p HUP INT TERM)" ]
+  ' shell "$REPO_ROOT" || fail 'migration changed its callers signal traps'
+}
+
 test_migration_rejects_unsafe_timestamp_before_mutation() {
   home="$TEST_TMP_ROOT/unsafe-timestamp-home"
   stow="$TEST_TMP_ROOT/unsafe-timestamp-stow"
@@ -751,6 +852,9 @@ test_merge_compatible_migration_always_reports_created_backup
 test_incomplete_rollback_reports_exact_backup_path
 test_backup_stage_restore_failure_reports_exact_backup_path
 test_rollback_retains_directory_backup_when_cleanup_leaves_destination
+test_migration_restores_originals_when_interrupted
+test_real_stow_migration_restores_originals_after_signal
+test_migration_preserves_callers_signal_traps
 test_migration_rejects_unsafe_timestamp_before_mutation
 test_relative_xdg_state_home_falls_back_inside_home
 test_failed_deployment_removes_new_links_and_restores_every_target
