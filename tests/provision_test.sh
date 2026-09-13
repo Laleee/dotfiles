@@ -643,16 +643,91 @@ test_zsh_only_selects_nvim_editor_when_available() {
   [ "$available_status" -eq 0 ] || fail 'available Neovim did not receive editor defaults and nv'
 }
 
+test_zsh_refreshes_cache_when_completion_release_changes() {
+  local target_home="$TEST_TMP_ROOT/completion-cache-home"
+  local fixture_bin="$TEST_TMP_ROOT/completion-cache-bin"
+  local shell_dir="$target_home/shell-config"
+  local command_name
+  local tool_name
+  mkdir -p "$shell_dir" "$fixture_bin"
+  cat >"$fixture_bin/herdr" <<'EOF'
+#!/bin/sh
+printf '#compdef %s\n' "$DOTFILES_TEST_COMPLETION_COMMAND"
+EOF
+  for tool_name in uv uvx; do
+    printf '#!/bin/sh\nprintf "#compdef %s\\n"\n' "$tool_name" >"$fixture_bin/$tool_name"
+  done
+  # Prevent discovery of a host Docker command during completion generation.
+  printf '#!/bin/sh\nexit 1\n' >"$fixture_bin/docker"
+  chmod +x "$fixture_bin/herdr" "$fixture_bin/uv" "$fixture_bin/uvx" "$fixture_bin/docker"
+
+  # Build a fresh cache before the first completion release exists.
+  # shellcheck disable=SC2016
+  env HOME="$target_home" ZDOTDIR="$shell_dir" XDG_DATA_HOME="$target_home/data" \
+    PATH="$fixture_bin:/usr/bin:/bin" zsh -dfc 'source "$1"' zsh "$REPO_ROOT/zsh/.zshrc"
+  [ -s "$shell_dir/.zcompdump" ] || fail 'initial completion cache was not created'
+
+  for command_name in dotfiles_cache_before dotfiles_cache_after; do
+    # shellcheck disable=SC2016
+    env HOME="$target_home" XDG_DATA_HOME="$target_home/data" \
+      DOTFILES_TEST_COMPLETION_COMMAND="$command_name" PATH="$fixture_bin:/usr/bin:/bin" \
+      bash -c '. "$1/scripts/provision-common.sh"; regenerate_completions' \
+      shell "$REPO_ROOT" || fail 'could not publish completion test release'
+    # The second release changes a compdef without changing the file count.
+    # shellcheck disable=SC2016
+    env HOME="$target_home" ZDOTDIR="$shell_dir" XDG_DATA_HOME="$target_home/data" \
+      DOTFILES_TEST_COMPLETION_COMMAND="$command_name" PATH="$fixture_bin:/usr/bin:/bin" \
+      zsh -dfc '
+        source "$1"
+        [[ ${_comps[$DOTFILES_TEST_COMPLETION_COMMAND]} == _herdr ]] || exit 1
+        if [[ $DOTFILES_TEST_COMPLETION_COMMAND == dotfiles_cache_after ]]; then
+          [[ -z ${_comps[dotfiles_cache_before]-} ]] || exit 1
+        else
+          zcompile "$ZDOTDIR/.zcompdump"
+        fi
+      ' zsh "$REPO_ROOT/zsh/.zshrc" || fail 'fresh cache hid the new completion release'
+    if [ "$command_name" = dotfiles_cache_before ]; then
+      cp "$shell_dir/.zcompdump" "$target_home/older-dump"
+    fi
+  done
+
+  # Model an older startup publishing its dump after a newer one finishes.
+  cp "$target_home/older-dump" "$shell_dir/.zcompdump"
+  # shellcheck disable=SC2016
+  env HOME="$target_home" ZDOTDIR="$shell_dir" XDG_DATA_HOME="$target_home/data" \
+    PATH="$fixture_bin:/usr/bin:/bin" zsh -dfc '
+      source "$1"
+      [[ ${_comps[dotfiles_cache_after]} == _herdr && -z ${_comps[dotfiles_cache_before]-} ]]
+    ' zsh "$REPO_ROOT/zsh/.zshrc" || fail 'a late older dump was mistaken for the current release'
+
+  # An unchanged release must still use the fast compinit path.
+  # shellcheck disable=SC2016
+  env HOME="$target_home" ZDOTDIR="$shell_dir" XDG_DATA_HOME="$target_home/data" \
+    PATH="$fixture_bin:/usr/bin:/bin" zsh -dfc '
+      compinit() { print -r -- "$@" >"$HOME/compinit-args"; }
+      source "$1"
+    ' zsh "$REPO_ROOT/zsh/.zshrc"
+  assert_equals "-C -i -d $shell_dir/.zcompdump" "$(cat "$target_home/compinit-args")" \
+    'an unchanged completion release triggered a full scan'
+
+  rm "$target_home/data/zsh/site-functions/.dotfiles-completions-current"
+  # shellcheck disable=SC2016
+  env HOME="$target_home" ZDOTDIR="$shell_dir" XDG_DATA_HOME="$target_home/data" \
+    PATH="$fixture_bin:/usr/bin:/bin" zsh -dfc '
+      source "$1"
+      [[ -z ${_comps[dotfiles_cache_after]-} ]]
+    ' zsh "$REPO_ROOT/zsh/.zshrc" || fail 'removed completion release left a stale mapping'
+}
+
 test_zsh_uses_compinit_cache_until_daily_refresh() {
   for cache_state in absent fresh stale; do
     home="$TEST_TMP_ROOT/zsh-compinit-$cache_state-home"
     dump="$home/.zcompdump"
     mkdir -p "$home"
     case $cache_state in
-      fresh) printf '#compdump\n' >"$dump" ;;
-      stale)
-        printf '#compdump\n' >"$dump"
-        touch -t 202001010000 "$dump"
+      fresh|stale)
+        HOME="$home" zsh -dfc 'source "$1"' zsh "$REPO_ROOT/zsh/.zshrc"
+        [ "$cache_state" != stale ] || touch -t 202001010000 "$dump"
         ;;
     esac
     HOME="$home" zsh -dfc '
@@ -665,7 +740,7 @@ test_zsh_uses_compinit_cache_until_daily_refresh() {
         [[ $args == "-C -i -d $dump" ]] ||
           fail 'fresh .zcompdump did not use compinit -C' ;;
       absent|stale)
-        [[ $args == "-i -d $dump" ]] ||
+        [[ $args == "-i -d $dump.dotfiles-next."* ]] ||
           fail "$cache_state .zcompdump did not trigger a full compinit scan" ;;
     esac
   done
@@ -1983,6 +2058,7 @@ test_zsh_local_config_can_override_git_aliases
 test_zsh_discovers_completions_after_native_compinit
 test_zsh_enables_shared_deduplicated_history
 test_zsh_only_selects_nvim_editor_when_available
+test_zsh_refreshes_cache_when_completion_release_changes
 test_zsh_uses_compinit_cache_until_daily_refresh
 test_zsh_loads_plugins_in_required_order_from_homebrew_share
 test_zsh_loads_plugins_from_usr_share_fallback

@@ -12,7 +12,8 @@ if [[ ${XDG_DATA_HOME:-} == /* ]]; then
 else
   _dotfiles_data_home=$HOME/.local/share
 fi
-fpath=("$_dotfiles_data_home/zsh/site-functions/.dotfiles-completions-current" $fpath)
+_dotfiles_completion_dir="$_dotfiles_data_home/zsh/site-functions/.dotfiles-completions-current"
+fpath=("$_dotfiles_completion_dir" $fpath)
 unset _dotfiles_data_home
 
 # Keep completion prefixes available to fzf-tab and label completion groups.
@@ -22,13 +23,37 @@ zstyle ':completion:*:descriptions' format '[%d]'
 # Native Zsh completion also discovers generated Herdr, UV, and UVX files.
 autoload -Uz compinit
 _dotfiles_zcompdump="${ZDOTDIR:-$HOME}/.zcompdump"
+_dotfiles_completion_release=
+[[ -d $_dotfiles_completion_dir ]] &&
+  _dotfiles_completion_release=${_dotfiles_completion_dir:A}
+# Quote the path into one comment line, even if it contains newlines.
+_dotfiles_release_tag="# dotfiles-completion-release ${(qqqq)_dotfiles_completion_release}"
+_dotfiles_cached_dump=
+[[ -r $_dotfiles_zcompdump ]] && _dotfiles_cached_dump=$(<"$_dotfiles_zcompdump")
+_dotfiles_cached_tag=${_dotfiles_cached_dump##*$'\n'}
 _dotfiles_zcompdump_stale=( "$_dotfiles_zcompdump"(N.mh+24) )
-if [[ ! -s $_dotfiles_zcompdump || $#_dotfiles_zcompdump_stale -gt 0 ]]; then
-  compinit -i -d "$_dotfiles_zcompdump"
+if [[ $_dotfiles_cached_tag != $_dotfiles_release_tag ||
+      ! -s $_dotfiles_zcompdump || $#_dotfiles_zcompdump_stale -gt 0 ]]; then
+  # A private dump forces a scan even when only compdef mappings changed.
+  # Publish its release tag and contents together so concurrent startups
+  # cannot label an older dump as belonging to a newer release.
+  if _dotfiles_next_dump=$(mktemp "$_dotfiles_zcompdump.dotfiles-next.XXXXXX"); then
+    if compinit -i -d "$_dotfiles_next_dump" && [[ -s $_dotfiles_next_dump ]]; then
+      print -r -- "$_dotfiles_release_tag" >>"$_dotfiles_next_dump" &&
+        command rm -f -- "$_dotfiles_zcompdump.zwc" &&
+        command mv -f -- "$_dotfiles_next_dump" "$_dotfiles_zcompdump"
+    fi
+    [[ ! -e $_dotfiles_next_dump ]] || command rm -f -- "$_dotfiles_next_dump"
+    _comp_dumpfile=$_dotfiles_zcompdump
+  else
+    compinit -i -D
+  fi
 else
   compinit -C -i -d "$_dotfiles_zcompdump"
 fi
-unset _dotfiles_zcompdump _dotfiles_zcompdump_stale
+unset _dotfiles_zcompdump _dotfiles_zcompdump_stale _dotfiles_next_dump \
+  _dotfiles_completion_dir _dotfiles_completion_release _dotfiles_release_tag \
+  _dotfiles_cached_dump _dotfiles_cached_tag
 
 _dotfiles_source_plugin() {
   local plugin_name=$1
