@@ -214,6 +214,16 @@ zstyle ':fzf-tab:complete:cd:*' fzf-preview 'ls -la -- "$realpath"'
 # Autosuggestions must load after fzf-tab and before local ZLE customizations.
 _dotfiles_source_plugin zsh-autosuggestions zsh-autosuggestions.zsh || true
 
+# Shift+Enter, mapped in the terminal to send ^J (line feed), inserts a literal
+# newline at the prompt instead of accepting the line. Return (^M) still submits.
+bindkey -M viins '^J' self-insert
+
+# In vi mode, backspace defaults to vi-backward-delete-char, which refuses to
+# delete past the insert-start point (including across an inserted newline).
+# Use the unrestricted deleter so multi-line edits behave like a normal editor.
+bindkey -M viins '^?' backward-delete-char
+bindkey -M viins '^H' backward-delete-char
+
 # Machine-local customizations are deliberately untracked and can override
 # any repository-provided aliases or integrations above.
 [[ -r "$HOME/.zshrc.local" ]] && source "$HOME/.zshrc.local"

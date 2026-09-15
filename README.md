@@ -293,6 +293,28 @@ The preset controls iTerm2's ANSI palette, foreground, background, cursor, and
 selection colors. The Starship, fzf, and Git configurations use the same
 Tokyo Night-derived palette.
 
+## iTerm2 Shift+Enter newline
+
+The `zsh` package binds Shift+Enter to insert a literal newline at the prompt
+instead of accepting the line, which is convenient for composing multi-line
+commands. The shell half is handled by `.zshrc`, but iTerm2 must be told to send
+a bare line feed (`^J`) for the shortcut. Like the color preset, this is a macOS
+application setting rather than a shell dotfile, so it is configured manually.
+
+To set it up in iTerm2:
+
+1. Open **Settings → Profiles → Keys → Key Mappings**.
+2. Remove any existing mapping for **⇧↵ (Shift+Enter)**, especially one whose
+   action is **Send Escape Sequence** — the leading escape byte flips Zsh's vi
+   mode into command mode instead of inserting a newline.
+3. Click **+** and record **⇧↵** as the keyboard shortcut.
+4. Set the action to **Send Hex Code** with the value `0x0a`, then click **OK**.
+
+`0x0a` is a raw line feed with no escape prefix, which `.zshrc` binds to
+`self-insert` in vi insert mode. Backspace is also rebound to
+`backward-delete-char` so it deletes freely across the inserted newline. Return
+(`^M`) still submits the line as usual.
+
 ## Upstream references
 
 - [LazyVim requirements and installation](https://www.lazyvim.org/) — Neovim
