@@ -305,15 +305,13 @@ To set it up in iTerm2:
 
 1. Open **Settings → Profiles → Keys → Key Mappings**.
 2. Remove any existing mapping for **⇧↵ (Shift+Enter)**, especially one whose
-   action is **Send Escape Sequence** — the leading escape byte flips Zsh's vi
-   mode into command mode instead of inserting a newline.
+   action is **Send Escape Sequence** — the leading escape byte is interpreted
+   as a separate keypress instead of inserting a newline.
 3. Click **+** and record **⇧↵** as the keyboard shortcut.
 4. Set the action to **Send Hex Code** with the value `0x0a`, then click **OK**.
 
 `0x0a` is a raw line feed with no escape prefix, which `.zshrc` binds to
-`self-insert` in vi insert mode. Backspace is also rebound to
-`backward-delete-char` so it deletes freely across the inserted newline. Return
-(`^M`) still submits the line as usual.
+`self-insert`. Return (`^M`) still submits the line as usual.
 
 ## Upstream references
 
