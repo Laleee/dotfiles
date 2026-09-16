@@ -5,6 +5,10 @@ SAVEHIST=50000
 setopt EXTENDED_HISTORY HIST_IGNORE_ALL_DUPS HIST_IGNORE_SPACE \
   HIST_REDUCE_BLANKS SHARE_HISTORY
 
+# Type a directory path to cd into it. AUTO_PUSHD records each jump on the
+# directory stack (deduped) so `cd -<Tab>` and `dirs -v` can retrace it.
+setopt AUTO_CD AUTO_PUSHD PUSHD_IGNORE_DUPS PUSHD_SILENT
+
 # Static completions are published as one atomic release by provisioning.
 typeset -U fpath
 if [[ ${XDG_DATA_HOME:-} == /* ]]; then
