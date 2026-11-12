@@ -228,6 +228,17 @@ bindkey -e
 # accept-line by default, so it must be overridden. Return (^M) still submits.
 bindkey '^J' self-insert
 
+# Up/Down search history for entries starting with the text already typed
+# (empty prompt still steps through all history). Both CSI and SS3 sequences are
+# bound because terminals send either depending on application cursor mode.
+autoload -Uz up-line-or-beginning-search down-line-or-beginning-search
+zle -N up-line-or-beginning-search
+zle -N down-line-or-beginning-search
+bindkey '^[[A' up-line-or-beginning-search
+bindkey '^[OA' up-line-or-beginning-search
+bindkey '^[[B' down-line-or-beginning-search
+bindkey '^[OB' down-line-or-beginning-search
+
 # Machine-local customizations are deliberately untracked and can override
 # any repository-provided aliases or integrations above.
 [[ -r "$HOME/.zshrc.local" ]] && source "$HOME/.zshrc.local"
