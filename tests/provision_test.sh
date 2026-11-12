@@ -878,7 +878,8 @@ EOF
   chmod +x "$bin/fzf"
 
   set +e
-  HOME="$home" HOMEBREW_PREFIX="$prefix" XDG_DATA_HOME="$home/.local/share" \
+  EDITOR=nvim VISUAL=nvim \
+    HOME="$home" HOMEBREW_PREFIX="$prefix" XDG_DATA_HOME="$home/.local/share" \
     DOTFILES_TEST_FZF_TAB_ORDER="$order" PATH="$bin:/usr/bin:/bin" \
     zsh -dfic '
       source "$1"
@@ -913,7 +914,8 @@ EOF
   chmod +x "$bin/fzf"
 
   set +e
-  HOME="$home" HOMEBREW_PREFIX="$prefix" PATH="$bin:/usr/bin:/bin" \
+  EDITOR=nvim VISUAL=nvim \
+    HOME="$home" HOMEBREW_PREFIX="$prefix" PATH="$bin:/usr/bin:/bin" \
     zsh -dfic '
       source "$1"
       (( $+functions[fzf-tab-complete] )) || exit 1

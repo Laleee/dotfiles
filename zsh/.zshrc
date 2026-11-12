@@ -9,6 +9,10 @@ setopt EXTENDED_HISTORY HIST_IGNORE_ALL_DUPS HIST_IGNORE_SPACE \
 # directory stack (deduped) so `cd -<Tab>` and `dirs -v` can retrace it.
 setopt AUTO_CD AUTO_PUSHD PUSHD_IGNORE_DUPS PUSHD_SILENT
 
+# Select emacs before completion and plugins bind the active keymap.
+# Inherited EDITOR/VISUAL=nvim would otherwise select vi mode.
+bindkey -e
+
 # Static completions are published as one atomic release by provisioning.
 typeset -U fpath
 if [[ ${XDG_DATA_HOME:-} == /* ]]; then
@@ -217,11 +221,6 @@ zstyle ':fzf-tab:complete:cd:*' fzf-preview 'ls -la -- "$realpath"'
 
 # Autosuggestions must load after fzf-tab and before local ZLE customizations.
 _dotfiles_source_plugin zsh-autosuggestions zsh-autosuggestions.zsh || true
-
-# Force emacs keymap. Zsh otherwise infers vi mode because $EDITOR/$VISUAL
-# contain "vi" (nvim), which drops the emacs-style Ctrl+A/Ctrl+E/word-jump
-# navigation that readline tools use everywhere.
-bindkey -e
 
 # Shift+Enter, mapped in the terminal to send ^J (line feed), inserts a literal
 # newline at the prompt instead of accepting the line. In the emacs keymap ^J is
