@@ -239,6 +239,12 @@ bindkey '^[OA' up-line-or-beginning-search
 bindkey '^[[B' down-line-or-beginning-search
 bindkey '^[OB' down-line-or-beginning-search
 
+# Option+Left/Right (CSI 1;3D/C) move by word. The emacs keymap only knows
+# ^[b/^[f, so without these the sequence is partly swallowed and the tail
+# (";3D") is inserted as text. Ctrl+arrows are left to macOS Spaces switching.
+bindkey '^[[1;3D' backward-word
+bindkey '^[[1;3C' forward-word
+
 # Machine-local customizations are deliberately untracked and can override
 # any repository-provided aliases or integrations above.
 [[ -r "$HOME/.zshrc.local" ]] && source "$HOME/.zshrc.local"
